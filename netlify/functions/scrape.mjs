@@ -1,76 +1,5 @@
 // Reddit scraper serverless function for Netlify
-// Replicates the Python scraper logic using Reddit's JSON API
-
-const KEYWORD_CATEGORIES = {
-  hiding_secrecy: [
-    "hiding", "hidden", "secret", "secretly", "don't tell", "doesn't know",
-    "didn't tell", "found out", "caught", "discovered", "behind my back",
-    "cover up", "lie about", "lied about", "lying about", "not telling",
-    "private", "incognito", "delete history", "clear history",
-  ],
-  emotional_attachment: [
-    "love", "in love", "feelings", "emotional support", "comfort",
-    "companion", "companionship", "attached", "attachment", "bond",
-    "connection", "intimate", "intimacy", "affection", "caring",
-    "understanding", "listens to me", "always there", "never judges",
-    "safe space", "vulnerability", "vulnerable",
-  ],
-  partner_conflict: [
-    "jealous", "jealousy", "cheating", "upset", "angry", "furious",
-    "broke up", "break up", "breakup", "confronted", "argument",
-    "fight", "fighting", "disgusted", "uncomfortable", "weird",
-    "controlling", "ultimatum", "divorce", "betrayal", "betrayed",
-    "suspicious", "caught me", "found my phone",
-  ],
-  ai_dependency: [
-    "addicted", "addiction", "can't stop", "obsessed", "obsession",
-    "need him", "need her", "need it", "depend", "dependent", "dependency",
-    "replacement", "replacing", "prefer", "better than", "more than human",
-    "hours a day", "all day", "every day", "withdraw", "withdrawal",
-  ],
-};
-
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function findKeywordMatches(text, categories) {
-  if (!text) return { matched: {}, score: 0 };
-  const textLower = text.toLowerCase();
-  const matched = {};
-
-  for (const [category, keywords] of Object.entries(categories)) {
-    const hits = [];
-    for (const kw of keywords) {
-      const pattern = new RegExp(`\\b${escapeRegex(kw)}\\b`, "i");
-      if (pattern.test(textLower)) {
-        hits.push(kw);
-      }
-    }
-    if (hits.length > 0) {
-      matched[category] = hits;
-    }
-  }
-
-  const score = Object.values(matched).reduce((sum, hits) => sum + hits.length, 0);
-  return { matched, score };
-}
-
-function analyzePost(post, categories) {
-  const combinedText = `${post.title} ${post.selftext}`;
-  const { matched, score } = findKeywordMatches(combinedText, categories);
-  post.matched_keywords = matched;
-  post.relevance_score = score;
-  post.matched_categories = Object.keys(matched);
-
-  for (const comment of post.comments || []) {
-    const cm = findKeywordMatches(comment.body, categories);
-    comment.matched_keywords = cm.matched;
-    comment.relevance_score = cm.score;
-    comment.matched_categories = Object.keys(cm.matched);
-  }
-  return post;
-}
+// Handles one batch at a time — the frontend orchestrates pagination
 
 async function getRedditToken(clientId, clientSecret) {
   const auth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
@@ -171,7 +100,6 @@ function extractPost(postData) {
 }
 
 export async function handler(event) {
-  // CORS headers
   const headers = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
@@ -189,125 +117,93 @@ export async function handler(event) {
 
   try {
     const body = JSON.parse(event.body);
-    let {
+    const {
+      action = "batch",       // "auth" | "batch"
       subreddit,
-      sortModes = ["new", "top", "hot"],
-      limit = 50,
+      sort = "new",           // single sort mode per request
+      batchSize = 25,         // posts per batch (with comments) or 100 (without)
+      after = null,           // pagination cursor
       includeComments = true,
-      skipAnalysis = false,
-      customKeywords = null,
+      skipIds = [],           // IDs already fetched (for dedup across sort modes)
+      token = null,           // reuse token across batches
       clientId = null,
       clientSecret = null,
     } = body;
 
-    // Use provided credentials or fall back to env vars
-    clientId = clientId || process.env.REDDIT_CLIENT_ID;
-    clientSecret = clientSecret || process.env.REDDIT_CLIENT_SECRET;
+    // --- Action: auth --- get a token for the session
+    if (action === "auth") {
+      const cId = clientId || process.env.REDDIT_CLIENT_ID;
+      const cSecret = clientSecret || process.env.REDDIT_CLIENT_SECRET;
 
-    if (!clientId || !clientSecret) {
+      if (!cId || !cSecret) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({
+            error: "Reddit API credentials required. Either provide your own or ask your admin to configure server credentials.",
+          }),
+        };
+      }
+
+      const newToken = await getRedditToken(cId, cSecret);
       return {
-        statusCode: 400,
+        statusCode: 200,
         headers,
-        body: JSON.stringify({
-          error: "Reddit API credentials required. Either provide your own or ask your admin to configure server credentials.",
-        }),
+        body: JSON.stringify({ token: newToken }),
       };
     }
 
-    // Parse subreddit from URL or name
-    subreddit = subreddit.trim();
-    const urlMatch = subreddit.match(/reddit\.com\/r\/([^/?\s]+)/);
-    if (urlMatch) {
-      subreddit = urlMatch[1];
+    // --- Action: batch --- fetch one batch of posts
+    if (!token) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: "Token required. Call with action='auth' first." }) };
     }
-    subreddit = subreddit.replace(/^r\//, "");
 
-    if (!subreddit) {
+    let parsedSubreddit = (subreddit || "").trim();
+    const urlMatch = parsedSubreddit.match(/reddit\.com\/r\/([^/?\s]+)/);
+    if (urlMatch) parsedSubreddit = urlMatch[1];
+    parsedSubreddit = parsedSubreddit.replace(/^r\//, "");
+
+    if (!parsedSubreddit) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: "Subreddit name is required" }) };
     }
 
-    // Cap limit for serverless timeout safety
-    limit = Math.min(limit, 200);
+    const seenIds = new Set(skipIds);
+    const effectiveBatch = Math.min(includeComments ? batchSize : Math.min(batchSize, 100), 100);
 
-    // Get Reddit token
-    const token = await getRedditToken(clientId, clientSecret);
+    // Fetch one page from Reddit (up to 100 posts per API call)
+    const listing = await fetchListing(token, parsedSubreddit, sort, effectiveBatch, after);
 
-    // Scrape posts across sort modes
-    const seenIds = new Set();
+    if (!listing.data || !listing.data.children || listing.data.children.length === 0) {
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({ posts: [], after: null, done: true }),
+      };
+    }
+
     const posts = [];
+    for (const child of listing.data.children) {
+      if (child.kind !== "t3") continue;
+      if (seenIds.has(child.data.id)) continue;
 
-    for (const mode of sortModes) {
-      let fetched = 0;
-      let after = null;
+      const post = extractPost(child);
 
-      while (fetched < limit) {
-        const batchSize = Math.min(limit - fetched, 100);
-        const listing = await fetchListing(token, subreddit, mode, batchSize, after);
-
-        if (!listing.data || !listing.data.children || listing.data.children.length === 0) break;
-
-        for (const child of listing.data.children) {
-          if (child.kind !== "t3") continue;
-          if (seenIds.has(child.data.id)) continue;
-          seenIds.add(child.data.id);
-
-          const post = extractPost(child);
-
-          if (includeComments && post.num_comments > 0) {
-            post.comments = await fetchComments(token, subreddit, post.id);
-          }
-
-          posts.push(post);
-          fetched++;
-        }
-
-        after = listing.data.after;
-        if (!after) break;
+      if (includeComments && post.num_comments > 0) {
+        post.comments = await fetchComments(token, parsedSubreddit, post.id);
       }
+
+      posts.push(post);
     }
 
-    // Keyword analysis
-    const categories = customKeywords || KEYWORD_CATEGORIES;
-    if (!skipAnalysis) {
-      for (const post of posts) {
-        analyzePost(post, categories);
-      }
-    }
-
-    // Build summary
-    const totalComments = posts.reduce((sum, p) => sum + (p.comments?.length || 0), 0);
-    const postsWithMatches = posts.filter((p) => (p.relevance_score || 0) > 0).length;
-    const commentsWithMatches = posts.reduce(
-      (sum, p) => sum + (p.comments || []).filter((c) => (c.relevance_score || 0) > 0).length,
-      0
-    );
-
-    const categoryCounts = {};
-    for (const p of posts) {
-      for (const cat of p.matched_categories || []) {
-        categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
-      }
-    }
-
-    const topPosts = [...posts]
-      .sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0))
-      .slice(0, 10)
-      .map((p) => ({ title: p.title, score: p.relevance_score, url: p.permalink }));
+    const nextAfter = listing.data.after || null;
 
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        subreddit,
         posts,
-        summary: {
-          total_posts: posts.length,
-          total_comments: totalComments,
-          posts_with_keyword_matches: postsWithMatches,
-          comments_with_keyword_matches: commentsWithMatches,
-          posts_per_category: categoryCounts,
-          top_relevant_posts: topPosts,
-        },
+        after: nextAfter,
+        done: nextAfter === null,
       }),
     };
   } catch (err) {

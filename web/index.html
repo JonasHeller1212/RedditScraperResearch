@@ -37,8 +37,8 @@
           </div>
           <div class="field">
             <label for="limit">Posts per sort mode</label>
-            <input type="number" id="limit" value="50" min="1" max="200" />
-            <small>Max 200 per mode (serverless limit)</small>
+            <input type="number" id="limit" value="50" min="1" max="10000" />
+            <small>No hard limit — scrapes in batches. Larger numbers take longer.</small>
           </div>
         </div>
         <div class="field-row">
@@ -90,6 +90,7 @@
 
       <div class="actions">
         <button class="btn btn-primary" id="scrapeBtn">Scrape Subreddit</button>
+        <button class="btn btn-stop hidden" id="stopBtn">Stop Scraping</button>
       </div>
 
       <!-- Progress -->

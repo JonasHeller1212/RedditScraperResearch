@@ -29,6 +29,7 @@ const DEFAULT_KEYWORDS = {
 };
 
 let scrapeResult = null;
+let abortController = null;
 
 // --- Collapsible Sections ---
 document.querySelectorAll(".toggle").forEach((toggle) => {
@@ -57,7 +58,6 @@ function createKeywordEditor(name, keywords) {
   editorsContainer.appendChild(div);
 }
 
-// Initialize default keyword editors
 for (const [name, keywords] of Object.entries(DEFAULT_KEYWORDS)) {
   createKeywordEditor(name, keywords);
 }
@@ -83,8 +83,80 @@ function getCustomKeywords() {
   return categories;
 }
 
-// --- Scrape Button ---
+// --- Keyword Analysis (client-side) ---
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function findKeywordMatches(text, categories) {
+  if (!text) return { matched: {}, score: 0 };
+  const textLower = text.toLowerCase();
+  const matched = {};
+
+  for (const [category, keywords] of Object.entries(categories)) {
+    const hits = [];
+    for (const kw of keywords) {
+      const pattern = new RegExp(`\\b${escapeRegex(kw)}\\b`, "i");
+      if (pattern.test(textLower)) {
+        hits.push(kw);
+      }
+    }
+    if (hits.length > 0) {
+      matched[category] = hits;
+    }
+  }
+
+  const score = Object.values(matched).reduce((sum, hits) => sum + hits.length, 0);
+  return { matched, score };
+}
+
+function analyzePost(post, categories) {
+  const combinedText = `${post.title} ${post.selftext}`;
+  const { matched, score } = findKeywordMatches(combinedText, categories);
+  post.matched_keywords = matched;
+  post.relevance_score = score;
+  post.matched_categories = Object.keys(matched);
+
+  for (const comment of post.comments || []) {
+    const cm = findKeywordMatches(comment.body, categories);
+    comment.matched_keywords = cm.matched;
+    comment.relevance_score = cm.score;
+    comment.matched_categories = Object.keys(cm.matched);
+  }
+  return post;
+}
+
+function buildSummary(posts) {
+  const totalComments = posts.reduce((sum, p) => sum + (p.comments?.length || 0), 0);
+  const postsWithMatches = posts.filter((p) => (p.relevance_score || 0) > 0).length;
+  const commentsWithMatches = posts.reduce(
+    (sum, p) => sum + (p.comments || []).filter((c) => (c.relevance_score || 0) > 0).length,
+    0
+  );
+  const categoryCounts = {};
+  for (const p of posts) {
+    for (const cat of p.matched_categories || []) {
+      categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+    }
+  }
+  const topPosts = [...posts]
+    .sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0))
+    .slice(0, 10)
+    .map((p) => ({ title: p.title, score: p.relevance_score, url: p.permalink }));
+
+  return {
+    total_posts: posts.length,
+    total_comments: totalComments,
+    posts_with_keyword_matches: postsWithMatches,
+    comments_with_keyword_matches: commentsWithMatches,
+    posts_per_category: categoryCounts,
+    top_relevant_posts: topPosts,
+  };
+}
+
+// --- Scrape Orchestration ---
 const scrapeBtn = document.getElementById("scrapeBtn");
+const stopBtn = document.getElementById("stopBtn");
 const progressSection = document.getElementById("progress");
 const progressFill = document.getElementById("progressFill");
 const statusText = document.getElementById("statusText");
@@ -92,15 +164,36 @@ const resultsSection = document.getElementById("results");
 const errorSection = document.getElementById("error");
 const errorText = document.getElementById("errorText");
 
+async function apiCall(body) {
+  const resp = await fetch("/api/scrape", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: abortController?.signal,
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || `Server error (${resp.status})`);
+  return data;
+}
+
+function updateProgress(message, percent = null) {
+  statusText.textContent = message;
+  if (percent !== null) {
+    progressFill.className = "progress-fill";
+    progressFill.style.width = `${Math.min(percent, 100)}%`;
+  }
+}
+
 scrapeBtn.addEventListener("click", async () => {
-  const subreddit = document.getElementById("subreddit").value.trim();
-  if (!subreddit) {
+  const subredditInput = document.getElementById("subreddit").value.trim();
+  if (!subredditInput) {
     showError("Please enter a subreddit name or URL.");
     return;
   }
 
-  const sortModes = Array.from(document.querySelectorAll('.checkbox-group input:checked'))
-    .map((cb) => cb.value);
+  const sortModes = Array.from(document.querySelectorAll(".checkbox-group input:checked")).map(
+    (cb) => cb.value
+  );
   if (sortModes.length === 0) {
     showError("Please select at least one sort mode.");
     return;
@@ -112,51 +205,119 @@ scrapeBtn.addEventListener("click", async () => {
   const clientId = document.getElementById("clientId").value.trim() || null;
   const clientSecret = document.getElementById("clientSecret").value.trim() || null;
   const customKeywords = getCustomKeywords();
+  const categories =
+    Object.keys(customKeywords).length > 0 ? customKeywords : DEFAULT_KEYWORDS;
 
-  // Show progress, hide others
+  // Batch size: smaller when fetching comments (each needs an API call)
+  const batchSize = includeComments ? 25 : 100;
+  const totalTarget = limit * sortModes.length; // rough target across all modes
+
+  // UI state
+  abortController = new AbortController();
   progressSection.classList.remove("hidden");
   resultsSection.classList.add("hidden");
   errorSection.classList.add("hidden");
-  scrapeBtn.disabled = true;
-  scrapeBtn.textContent = "Scraping...";
-  progressFill.className = "progress-fill indeterminate";
-  statusText.textContent = `Scraping r/${subreddit}... This may take a minute.`;
+  scrapeBtn.classList.add("hidden");
+  stopBtn.classList.remove("hidden");
+  progressFill.className = "progress-fill";
+  progressFill.style.width = "0%";
+  updateProgress("Authenticating with Reddit...");
 
   try {
-    const response = await fetch("/api/scrape", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        subreddit,
-        sortModes,
-        limit,
-        includeComments,
-        skipAnalysis,
-        customKeywords: Object.keys(customKeywords).length > 0 ? customKeywords : null,
-        clientId,
-        clientSecret,
-      }),
+    // Step 1: Get auth token
+    const authResp = await apiCall({
+      action: "auth",
+      clientId,
+      clientSecret,
     });
+    const token = authResp.token;
 
-    const data = await response.json();
+    // Step 2: Batch-scrape each sort mode
+    const allPosts = [];
+    const seenIds = new Set();
 
-    if (!response.ok) {
-      throw new Error(data.error || `Server error (${response.status})`);
+    // Parse subreddit name from URL
+    let subreddit = subredditInput;
+    const urlMatch = subreddit.match(/reddit\.com\/r\/([^/?\s]+)/);
+    if (urlMatch) subreddit = urlMatch[1];
+    subreddit = subreddit.replace(/^r\//, "");
+
+    for (let modeIdx = 0; modeIdx < sortModes.length; modeIdx++) {
+      const mode = sortModes[modeIdx];
+      let after = null;
+      let modeFetched = 0;
+
+      while (modeFetched < limit) {
+        const modeLabel = mode.charAt(0).toUpperCase() + mode.slice(1);
+        const overallFetched = allPosts.length;
+        const percent = (overallFetched / totalTarget) * 100;
+        updateProgress(
+          `Fetching "${modeLabel}" posts from r/${subreddit}... (${overallFetched} posts so far)`,
+          percent
+        );
+
+        const batchResp = await apiCall({
+          action: "batch",
+          token,
+          subreddit,
+          sort: mode,
+          batchSize: Math.min(batchSize, limit - modeFetched),
+          after,
+          includeComments,
+          skipIds: Array.from(seenIds),
+        });
+
+        const newPosts = batchResp.posts.filter((p) => !seenIds.has(p.id));
+        for (const p of newPosts) {
+          seenIds.add(p.id);
+          allPosts.push(p);
+          modeFetched++;
+        }
+
+        // Stop if Reddit has no more pages or we got nothing new
+        if (batchResp.done || newPosts.length === 0) break;
+        after = batchResp.after;
+      }
     }
 
-    scrapeResult = data;
-    progressFill.className = "progress-fill";
-    progressFill.style.width = "100%";
-    statusText.textContent = "Done!";
+    // Step 3: Keyword analysis (client-side — instant, no timeout)
+    if (!skipAnalysis) {
+      updateProgress("Analyzing keywords...", 95);
+      for (const post of allPosts) {
+        analyzePost(post, categories);
+      }
+    }
 
-    showResults(data);
+    updateProgress("Done!", 100);
+
+    scrapeResult = {
+      subreddit,
+      posts: allPosts,
+      summary: buildSummary(allPosts),
+    };
+
+    showResults(scrapeResult);
   } catch (err) {
-    showError(err.message);
-    progressSection.classList.add("hidden");
+    if (err.name === "AbortError") {
+      updateProgress("Stopped by user.", null);
+      // Still show partial results if we have any
+      if (scrapeResult || (allPosts && allPosts.length > 0)) {
+        // scrapeResult may not be set yet, build from whatever we have
+      }
+    } else {
+      showError(err.message);
+      progressSection.classList.add("hidden");
+    }
   } finally {
-    scrapeBtn.disabled = false;
-    scrapeBtn.textContent = "Scrape Subreddit";
+    scrapeBtn.classList.remove("hidden");
+    stopBtn.classList.add("hidden");
+    abortController = null;
   }
+});
+
+// Stop button
+stopBtn.addEventListener("click", () => {
+  if (abortController) abortController.abort();
 });
 
 function showError(msg) {
