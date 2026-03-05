@@ -1,7 +1,7 @@
 import argparse
 import json
 
-from scraper import create_reddit_client, scrape_posts
+from scraper import scrape_posts
 from analyzer import analyze_all, summarize
 from export import export_all
 from config import SORT_MODES
@@ -22,8 +22,7 @@ def main():
     print("=== Reddit AI Relationships Scraper ===\n")
 
     print("[1/3] Scraping posts and comments...")
-    reddit = create_reddit_client()
-    posts = scrape_posts(reddit, limit=args.limit, sort_modes=sort_modes)
+    posts = scrape_posts(limit=args.limit, sort_modes=sort_modes)
     print(f"\nScraped {len(posts)} unique posts.\n")
 
     if not args.skip_analysis:
