@@ -195,10 +195,62 @@ body {
   background-clip: text;
 }
 
-.hero p {
+.hero-subtitle {
   color: var(--text-muted);
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 400;
+  max-width: 520px;
+  margin: 0 auto;
+  line-height: 1.5;
+}
+
+/* How it works */
+.how-it-works {
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.how-steps {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.how-step {
+  flex: 1;
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+}
+
+.how-step-num {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--lemon), var(--orange));
+  color: #1a1a2e;
+  font-size: 0.75rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.how-step strong {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.1rem;
+}
+
+.how-step-desc {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.4;
 }
 
 /* Input group */
@@ -314,7 +366,71 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--lemon);
+  margin-bottom: 0.25rem;
+}
+
+.options-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-dim);
   margin-bottom: 1rem;
+}
+
+/* Info tooltip (?) badges */
+.info-tooltip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  border: 1px solid var(--glass-border);
+  color: var(--text-dim);
+  font-size: 0.65rem;
+  font-weight: 700;
+  cursor: help;
+  position: relative;
+  vertical-align: middle;
+  margin-left: 0.3rem;
+  transition: all 0.2s;
+}
+
+.info-tooltip:hover {
+  background: var(--lemon-glow);
+  border-color: var(--lemon);
+  color: var(--lemon);
+}
+
+.info-tooltip:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--bg);
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.45;
+  width: 240px;
+  white-space: normal;
+  z-index: 100;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+.info-tooltip:hover::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--text);
+  z-index: 100;
+  pointer-events: none;
 }
 
 .options-grid {
@@ -646,6 +762,12 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--lemon);
+  margin-bottom: 0.25rem;
+}
+
+.results-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-dim);
   margin-bottom: 1rem;
 }
 
@@ -720,6 +842,30 @@ body {
 
 .btn-download svg {
   color: var(--lemon);
+}
+
+/* Export hints */
+.export-hint {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.export-hint p {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.export-hint p + p {
+  margin-top: 0.3rem;
+}
+
+.export-hint strong {
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 /* Preview */
@@ -804,9 +950,23 @@ body {
 footer {
   text-align: center;
   padding: 2rem 1rem;
-  color: var(--text-dim);
-  font-size: 0.75rem;
   border-top: 1px solid var(--glass-border);
+}
+
+.footer-content {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.footer-main {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.footer-note {
+  font-size: 0.72rem;
+  color: var(--text-dim);
 }
 
 /* Theme toggle */
@@ -914,4 +1074,7 @@ footer {
   .input-group { flex-direction: column; }
   .btn-scrape, .btn-stop { width: 100%; padding: 0.8rem; justify-content: center; }
   .stats-grid { grid-template-columns: 1fr 1fr; }
+  .how-steps { flex-direction: column; gap: 0.75rem; }
+  .info-tooltip:hover::after { left: auto; right: -8px; transform: none; width: 200px; }
+  .info-tooltip:hover::before { left: auto; right: 4px; transform: none; }
 }
