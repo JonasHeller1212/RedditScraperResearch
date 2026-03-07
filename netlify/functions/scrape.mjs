@@ -1,89 +1,110 @@
 // Reddit scraper serverless function for Netlify
-// Uses PullPush.io API — free Reddit data mirror, no authentication required
+// Uses Reddit's free .json endpoints — no authentication required
 
-const USER_AGENT = "LemonSqueeze/1.0 (research scraper)";
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function fetchPullPush(url, retries = 5) {
+async function fetchReddit(url, retries = 3) {
   for (let attempt = 0; attempt < retries; attempt++) {
     const resp = await fetch(url, {
-      headers: { "User-Agent": USER_AGENT },
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "application/json, text/html;q=0.9, */*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
     });
 
     if (resp.status === 429) {
-      // Longer backoff: 5s, 10s, 20s, 40s, 80s
-      const wait = 5000 * 2 ** attempt;
+      const wait = 2000 * 2 ** attempt;
       await delay(wait);
       continue;
     }
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
+      if (attempt < retries - 1) {
+        const wait = 2000 * 2 ** attempt;
+        await delay(wait);
+        continue;
+      }
       const snippet = text.length > 200 ? text.slice(0, 200) + "…" : text;
-      throw new Error(`PullPush API error (${resp.status}): ${snippet}`);
+      throw new Error(`Reddit API error (${resp.status}): ${snippet}`);
     }
 
     return resp.json();
   }
 
-  throw new Error("PullPush API rate limit exceeded. Please try again in a minute.");
+  throw new Error("Reddit API rate limit exceeded. Please try again in a minute.");
 }
 
-async function fetchSubmissions(subreddit, size, before = null, sort = "new", timeFilter = "all") {
-  let url = `https://api.pullpush.io/reddit/search/submission/?subreddit=${encodeURIComponent(subreddit)}&size=${Math.min(size, 100)}`;
+async function fetchSubmissions(subreddit, size, after = null, sort = "new", timeFilter = "all") {
+  const params = new URLSearchParams({ limit: String(Math.min(size, 100)), raw_json: "1" });
 
-  // PullPush sort: "desc" (newest first) or "asc" (oldest first)
-  // For "new" sort, we want newest first
-  // For "top" sort, we sort by score client-side after fetching
-  url += `&sort=desc&sort_type=created_utc`;
-
-  if (before) {
-    url += `&before=${before}`;
+  if (sort === "top" && timeFilter) {
+    params.set("t", timeFilter);
   }
 
-  // For "top" sort with time filter, limit the time range
-  if (sort === "top" && timeFilter !== "all") {
-    const now = Math.floor(Date.now() / 1000);
-    const ranges = {
-      day: 86400,
-      week: 604800,
-      month: 2592000,
-      year: 31536000,
-    };
-    if (ranges[timeFilter]) {
-      url += `&after=${now - ranges[timeFilter]}`;
-    }
+  if (after) {
+    params.set("after", after);
   }
 
-  const data = await fetchPullPush(url);
-  return Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+  const url = `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/${sort}.json?${params}`;
+  const data = await fetchReddit(url);
+
+  const children = data?.data?.children || [];
+  const nextAfter = data?.data?.after || null;
+
+  return { children, nextAfter };
 }
 
-async function fetchComments(postId) {
-  // PullPush uses the full "t3_" prefixed link_id for comment search
-  const url = `https://api.pullpush.io/reddit/search/comment/?link_id=${encodeURIComponent(postId)}&size=100&sort=desc&sort_type=created_utc`;
+async function fetchComments(postId, subreddit) {
+  const url = `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/comments/${postId}.json?limit=500&depth=10&raw_json=1`;
 
   try {
-    const data = await fetchPullPush(url);
-    const items = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+    const data = await fetchReddit(url);
+    if (!data || !Array.isArray(data) || data.length < 2) return [];
 
-    return items.map((c) => ({
-      id: c.id || "",
-      body: c.body || "",
-      author: c.author || "[deleted]",
-      created_utc: c.created_utc || 0,
-      created_datetime: c.created_utc ? new Date(c.created_utc * 1000).toISOString() : "",
-      score: c.score || 0,
-      parent_id: c.parent_id || "",
-      is_submitter: c.is_submitter || false,
-    }));
+    const children = data[1]?.data?.children || [];
+    return parseCommentTree(children);
   } catch {
     return [];
   }
 }
 
-function mapPost(p) {
+function parseCommentTree(children) {
+  const comments = [];
+  if (!children) return comments;
+
+  for (const child of children) {
+    if (child?.kind !== "t1") continue;
+
+    const d = child.data || {};
+    comments.push({
+      id: d.id || "",
+      body: d.body || "",
+      author: d.author || "[deleted]",
+      created_utc: d.created_utc || 0,
+      created_datetime: d.created_utc ? new Date(d.created_utc * 1000).toISOString() : "",
+      score: d.score || 0,
+      parent_id: d.parent_id || "",
+      is_submitter: d.is_submitter || false,
+    });
+
+    // Recurse into replies
+    const replies = d.replies;
+    if (replies && typeof replies === "object" && replies.data) {
+      const replyChildren = replies.data.children || [];
+      comments.push(...parseCommentTree(replyChildren));
+    }
+  }
+  return comments;
+}
+
+function mapPost(child) {
+  const p = child.data || child;
+  const permalink = p.permalink || "";
   return {
     id: p.id || "",
     title: p.title || "",
@@ -95,11 +116,7 @@ function mapPost(p) {
     upvote_ratio: p.upvote_ratio || 0,
     num_comments: p.num_comments || 0,
     url: p.url || "",
-    permalink: p.permalink
-      ? `https://reddit.com${p.permalink}`
-      : p.id
-        ? `https://reddit.com/r/${p.subreddit}/comments/${p.id}`
-        : "",
+    permalink: permalink ? `https://reddit.com${permalink}` : "",
     link_flair_text: p.link_flair_text || "",
     over_18: p.over_18 || false,
     comments: [],
@@ -146,18 +163,16 @@ export async function handler(event) {
     const seenIds = new Set(skipIds);
     const effectiveBatch = Math.min(batchSize, 100);
 
-    // PullPush uses Unix timestamp for pagination (the `after` param from client
-    // is repurposed: first call it's null, subsequent calls it's the `created_utc`
-    // of the last post we returned — we pass it as `before` to PullPush)
-    const submissions = await fetchSubmissions(
+    // `after` is Reddit's cursor string (e.g. "t3_abc123") or null for first page
+    const { children, nextAfter } = await fetchSubmissions(
       parsedSubreddit,
       effectiveBatch,
-      after,  // This is the `before` timestamp for PullPush pagination
+      after,
       sort,
-      timeFilter
+      timeFilter,
     );
 
-    if (!submissions || submissions.length === 0) {
+    if (!children || children.length === 0) {
       return {
         statusCode: 200,
         headers,
@@ -165,42 +180,35 @@ export async function handler(event) {
       };
     }
 
-    // If sorting by "top", sort by score descending
-    if (sort === "top") {
-      submissions.sort((a, b) => (b.score || 0) - (a.score || 0));
-    }
-
-    // Map all posts first (skip duplicates)
+    // Map posts, skip duplicates
     const posts = [];
-    let lastCreatedUtc = null;
+    for (const child of children) {
+      const d = child.data || {};
+      if (!d.id) continue;
+      if (seenIds.has(d.id)) continue;
 
-    for (const raw of submissions) {
-      if (!raw.id) continue;
-      if (seenIds.has(raw.id)) continue;
-
-      const post = mapPost(raw);
-      lastCreatedUtc = raw.created_utc;
+      const post = mapPost(child);
       posts.push(post);
     }
 
-    // Fetch comments in parallel batches of 3, with delay between batches
-    // to avoid PullPush rate limits on larger scrapes
+    // Fetch comments in parallel batches of 3 with delay between batches
     if (includeComments) {
       const PARALLEL = 3;
       const postsWithComments = posts.filter((p) => p.num_comments > 0);
       for (let i = 0; i < postsWithComments.length; i += PARALLEL) {
-        if (i > 0) await delay(1500); // breathing room between batches
+        if (i > 0) await delay(1500);
         const batch = postsWithComments.slice(i, i + PARALLEL);
-        const results = await Promise.all(batch.map((p) => fetchComments(p.id)));
+        const results = await Promise.all(
+          batch.map((p) => fetchComments(p.id, parsedSubreddit)),
+        );
         for (let j = 0; j < batch.length; j++) {
           batch[j].comments = results[j];
         }
       }
     }
 
-    // For pagination: if we got a full batch, use the last post's created_utc as cursor
-    const done = submissions.length < effectiveBatch;
-    const nextAfter = done ? null : lastCreatedUtc;
+    // Reddit provides cursor-based pagination via `after` field
+    const done = !nextAfter;
 
     return {
       statusCode: 200,
