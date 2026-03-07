@@ -20,8 +20,25 @@ async function fetchPullPush(url, retries = 5) {
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
+      // If we get an HTML response, treat it like a rate limit and retry
+      if (text.trimStart().startsWith("<") && attempt < retries - 1) {
+        const wait = 5000 * 2 ** attempt;
+        await delay(wait);
+        continue;
+      }
       const snippet = text.length > 200 ? text.slice(0, 200) + "…" : text;
       throw new Error(`PullPush API error (${resp.status}): ${snippet}`);
+    }
+
+    // Guard against HTML responses on 200 status (some proxies/CDNs do this)
+    const contentType = resp.headers.get("content-type") || "";
+    if (!contentType.includes("json")) {
+      if (attempt < retries - 1) {
+        const wait = 5000 * 2 ** attempt;
+        await delay(wait);
+        continue;
+      }
+      throw new Error("PullPush returned non-JSON response. Please try again.");
     }
 
     return resp.json();
