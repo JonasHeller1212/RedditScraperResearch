@@ -422,6 +422,12 @@ document.getElementById("downloadCommentsCsv").addEventListener("click", () => {
   downloadFile(csv, `reddit_${scrapeResult.subreddit}_comments.csv`, "text/csv");
 });
 
+document.getElementById("downloadCombinedCsv").addEventListener("click", () => {
+  if (!scrapeResult) return;
+  const csv = combinedToCSV(scrapeResult.posts, scrapeResult.keywordsEnabled);
+  downloadFile(csv, `reddit_${scrapeResult.subreddit}_combined.csv`, "text/csv");
+});
+
 function downloadFile(content, filename, mimeType) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -484,6 +490,93 @@ function postsToCSV(posts, keywordsEnabled) {
     }
     return headers.map((h) => csvEscape(row[h])).join(",");
   });
+
+  return [headers.join(","), ...rows].join("\n");
+}
+
+function combinedToCSV(posts, keywordsEnabled) {
+  const headers = [
+    "post_id", "subreddit", "post_title", "post_selftext", "post_author",
+    "post_created_utc", "post_created_datetime", "post_date", "post_day_of_week", "post_hour_utc",
+    "post_score", "post_upvote_ratio", "post_num_comments", "post_permalink", "post_flair",
+    "post_title_word_count", "post_selftext_word_count",
+    "comment_id", "comment_body", "comment_author",
+    "comment_created_utc", "comment_created_datetime", "comment_date", "comment_day_of_week", "comment_hour_utc",
+    "comment_score", "comment_parent_id", "comment_is_submitter",
+    "comment_body_word_count",
+    "row_type",
+  ];
+  if (keywordsEnabled) {
+    headers.push("post_relevance_score", "post_matched_categories", "post_matched_keywords",
+                  "comment_relevance_score", "comment_matched_categories", "comment_matched_keywords");
+  }
+
+  const rows = [];
+  for (const p of posts) {
+    const pdp = toDateParts(p.created_datetime);
+    const postFields = {
+      post_id: p.id,
+      subreddit: scrapeResult.subreddit,
+      post_title: p.title,
+      post_selftext: p.selftext,
+      post_author: p.author,
+      post_created_utc: p.created_utc,
+      post_created_datetime: p.created_datetime,
+      post_date: pdp.date,
+      post_day_of_week: pdp.day_of_week,
+      post_hour_utc: pdp.hour,
+      post_score: p.score,
+      post_upvote_ratio: p.upvote_ratio,
+      post_num_comments: p.num_comments,
+      post_permalink: p.permalink,
+      post_flair: p.link_flair_text || "",
+      post_title_word_count: wordCount(p.title),
+      post_selftext_word_count: wordCount(p.selftext),
+    };
+    if (keywordsEnabled) {
+      postFields.post_relevance_score = p.relevance_score || 0;
+      postFields.post_matched_categories = (p.matched_categories || []).join("; ");
+      postFields.post_matched_keywords = JSON.stringify(p.matched_keywords || {});
+    }
+
+    const comments = p.comments || [];
+    if (comments.length === 0) {
+      // Post with no comments — still include as its own row
+      const row = { ...postFields, row_type: "post_only" };
+      if (keywordsEnabled) {
+        row.comment_relevance_score = "";
+        row.comment_matched_categories = "";
+        row.comment_matched_keywords = "";
+      }
+      rows.push(headers.map((h) => csvEscape(row[h])).join(","));
+    } else {
+      for (const c of comments) {
+        const cdp = toDateParts(c.created_datetime);
+        const row = {
+          ...postFields,
+          comment_id: c.id,
+          comment_body: c.body,
+          comment_author: c.author,
+          comment_created_utc: c.created_utc,
+          comment_created_datetime: c.created_datetime,
+          comment_date: cdp.date,
+          comment_day_of_week: cdp.day_of_week,
+          comment_hour_utc: cdp.hour,
+          comment_score: c.score,
+          comment_parent_id: c.parent_id,
+          comment_is_submitter: c.is_submitter,
+          comment_body_word_count: wordCount(c.body),
+          row_type: "comment",
+        };
+        if (keywordsEnabled) {
+          row.comment_relevance_score = c.relevance_score || 0;
+          row.comment_matched_categories = (c.matched_categories || []).join("; ");
+          row.comment_matched_keywords = JSON.stringify(c.matched_keywords || {});
+        }
+        rows.push(headers.map((h) => csvEscape(row[h])).join(","));
+      }
+    }
+  }
 
   return [headers.join(","), ...rows].join("\n");
 }

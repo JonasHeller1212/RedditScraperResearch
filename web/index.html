@@ -196,6 +196,10 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Comments CSV
           </button>
+          <button class="btn-download" id="downloadCombinedCsv" title="Download a combined tidy CSV with one row per comment, each joined with its parent post fields. Posts without comments appear as their own row. Ideal for R (tidyverse) or Python (pandas) analysis.">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Combined CSV
+          </button>
           <button class="btn-download" id="downloadJson" title="Download the complete dataset as JSON, including nested comments. Best for programmatic analysis with Python, R, or Node.js.">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Full JSON
@@ -205,6 +209,7 @@
         <div class="export-hint">
           <p><strong>Posts CSV</strong> &mdash; one row per post with title, author, score, timestamps, word counts, and keyword matches</p>
           <p><strong>Comments CSV</strong> &mdash; one row per comment with post context, useful for discourse analysis</p>
+          <p><strong>Combined CSV</strong> &mdash; tidy format joining each comment with its parent post, ready for R/Python analysis</p>
           <p><strong>Full JSON</strong> &mdash; nested structure with all data, ideal for Python/R scripting</p>
         </div>
 

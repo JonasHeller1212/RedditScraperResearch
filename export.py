@@ -67,8 +67,57 @@ def export_comments_csv(posts, filename="comments.csv"):
     return path
 
 
+def export_combined_csv(posts, filename="combined.csv"):
+    """One row per comment joined with parent post fields.
+    Posts without comments appear as their own row (comment fields NA).
+    Tidy-data format ready for R/Python analysis."""
+    rows = []
+    for p in posts:
+        post_fields = {
+            "post_id": p["id"],
+            "post_title": p["title"],
+            "post_selftext": p["selftext"],
+            "post_author": p["author"],
+            "post_created_datetime": p["created_datetime"],
+            "post_score": p["score"],
+            "post_upvote_ratio": p["upvote_ratio"],
+            "post_num_comments": p["num_comments"],
+            "post_permalink": p["permalink"],
+            "post_flair": p.get("link_flair_text", ""),
+            "post_relevance_score": p.get("relevance_score", 0),
+            "post_matched_categories": ", ".join(p.get("matched_categories", [])),
+            "post_matched_keywords": json.dumps(p.get("matched_keywords", {})),
+        }
+        comments = p.get("comments", [])
+        if not comments:
+            rows.append({**post_fields, "row_type": "post_only"})
+        else:
+            for c in comments:
+                rows.append({
+                    **post_fields,
+                    "comment_id": c["id"],
+                    "comment_body": c["body"],
+                    "comment_author": c["author"],
+                    "comment_created_datetime": c["created_datetime"],
+                    "comment_score": c["score"],
+                    "comment_parent_id": c["parent_id"],
+                    "comment_is_submitter": c["is_submitter"],
+                    "comment_relevance_score": c.get("relevance_score", 0),
+                    "comment_matched_categories": ", ".join(c.get("matched_categories", [])),
+                    "comment_matched_keywords": json.dumps(c.get("matched_keywords", {})),
+                    "row_type": "comment",
+                })
+
+    df = pd.DataFrame(rows)
+    path = os.path.join(DATA_DIR, filename)
+    df.to_csv(path, index=False, encoding="utf-8")
+    print(f"Exported combined CSV: {path} ({len(rows)} rows)")
+    return path
+
+
 def export_all(posts):
     os.makedirs(DATA_DIR, exist_ok=True)
     export_json(posts)
     export_posts_csv(posts)
     export_comments_csv(posts)
+    export_combined_csv(posts)
