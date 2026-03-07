@@ -3,22 +3,28 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Reddit Scraper</title>
+  <title>LemonSqueeze - Reddit Research Data Collector</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
+  <div class="bg-blobs" aria-hidden="true">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+  </div>
+
   <div class="app">
     <nav class="topbar">
       <div class="topbar-inner">
         <div class="logo">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 8s-1.5-2-4-2-4 2-4 2"/><line x1="9" y1="15" x2="9.01" y2="15"/><line x1="15" y1="15" x2="15.01" y2="15"/></svg>
-          Reddit Scraper
+          <span class="logo-icon">🍋</span>
+          <span class="logo-text">LemonSqueeze</span>
         </div>
-        <button class="theme-toggle" id="themeToggle" title="Toggle theme">
+        <button class="theme-toggle" id="themeToggle" title="Switch between light and dark mode">
           <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
           <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         </button>
@@ -27,48 +33,89 @@
 
     <main class="main">
       <div class="hero">
-        <h1>Scrape any subreddit</h1>
-        <p>Collect posts and comments for research and analysis. No API keys needed.</p>
+        <div class="hero-icon">🍋</div>
+        <h1>Squeeze research data from any subreddit</h1>
+        <p class="hero-subtitle">Collect posts, comments, and metadata into structured CSV and JSON datasets. Built for academic research.</p>
+      </div>
+
+      <!-- How it works -->
+      <div class="how-it-works glass-card">
+        <div class="how-steps">
+          <div class="how-step">
+            <span class="how-step-num">1</span>
+            <div>
+              <strong>Enter a subreddit</strong>
+              <span class="how-step-desc">Type a name like "AskReddit" or paste a full Reddit URL</span>
+            </div>
+          </div>
+          <div class="how-step">
+            <span class="how-step-num">2</span>
+            <div>
+              <strong>Configure &amp; squeeze</strong>
+              <span class="how-step-desc">Choose sort modes, limits, and optional keyword filters</span>
+            </div>
+          </div>
+          <div class="how-step">
+            <span class="how-step-num">3</span>
+            <div>
+              <strong>Download your dataset</strong>
+              <span class="how-step-desc">Get structured CSV or JSON files ready for analysis</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Subreddit Input -->
       <div class="input-group">
-        <div class="input-wrapper">
+        <div class="input-wrapper" title="Enter a subreddit name (e.g. 'AskReddit') or paste a full Reddit URL">
           <span class="input-prefix">r/</span>
-          <input type="text" id="subreddit" placeholder="subreddit name or full URL" autocomplete="off" spellcheck="false" />
+          <input type="text" id="subreddit" placeholder="e.g. AskReddit, science, or paste a reddit.com URL" autocomplete="off" spellcheck="false" />
         </div>
-        <button class="btn-scrape" id="scrapeBtn">Scrape</button>
-        <button class="btn-stop hidden" id="stopBtn">Stop</button>
+        <button class="btn-scrape" id="scrapeBtn" title="Start collecting posts from this subreddit">
+          <span class="btn-text">Squeeze</span>
+          <span class="btn-icon">🍋</span>
+        </button>
+        <button class="btn-stop hidden" id="stopBtn" title="Stop the scrape (data collected so far will be kept)">Stop</button>
       </div>
 
       <!-- Scrape Options -->
-      <div class="options-panel">
+      <div class="options-panel glass-card">
         <div class="options-header">
-          <h2>Options</h2>
+          <h2>Collection Settings</h2>
+          <p class="options-subtitle">Configure how data is collected. Hover over any option for more details.</p>
         </div>
 
         <div class="options-grid">
           <!-- Sort Modes -->
           <div class="option-block">
-            <label class="option-label">Sort by</label>
+            <label class="option-label">
+              Sort by
+              <span class="info-tooltip" data-tooltip="Select one or more sort orders. Each mode fetches a separate batch of posts, so selecting all three with 50 posts/sort yields up to 150 unique posts.">?</span>
+            </label>
             <div class="pill-group" id="sortPills">
-              <button class="pill active" data-value="new">New</button>
-              <button class="pill active" data-value="top">Top</button>
-              <button class="pill active" data-value="hot">Hot</button>
+              <button class="pill active" data-value="new" title="Most recently submitted posts">New</button>
+              <button class="pill active" data-value="top" title="Highest-scored posts (uses Time Filter below)">Top</button>
+              <button class="pill active" data-value="hot" title="Currently trending posts on the subreddit">Hot</button>
             </div>
           </div>
 
           <!-- Post Limit -->
           <div class="option-block">
-            <label class="option-label" for="limit">Posts per sort</label>
-            <input type="number" id="limit" value="50" min="1" max="10000" class="input-small" />
+            <label class="option-label" for="limit">
+              Posts per sort
+              <span class="info-tooltip" data-tooltip="How many posts to collect per sort mode. E.g. 50 posts x 3 sort modes = up to 150 posts total. Reddit caps at ~1000 per sort.">?</span>
+            </label>
+            <input type="number" id="limit" value="50" min="1" max="10000" class="input-small" title="Number of posts to fetch per sort mode (1-10,000)" />
           </div>
 
           <!-- Time Filter (for Top) -->
           <div class="option-block">
-            <label class="option-label">Time filter (Top)</label>
+            <label class="option-label">
+              Time filter
+              <span class="info-tooltip" data-tooltip="Only applies to 'Top' sort. Controls the time window for top-scored posts. 'All time' gives the highest-scoring posts ever.">?</span>
+            </label>
             <div class="select-wrapper">
-              <select id="timeFilter">
+              <select id="timeFilter" title="Time range for 'Top' sort mode">
                 <option value="all" selected>All time</option>
                 <option value="year">Past year</option>
                 <option value="month">Past month</option>
@@ -81,25 +128,25 @@
 
         <!-- Toggles -->
         <div class="toggles-grid">
-          <label class="toggle-switch">
+          <label class="toggle-switch" title="Fetch the full comment tree for each post. Adds body text, author, score, and timestamps per comment. Slows down collection but provides richer data.">
             <input type="checkbox" id="includeComments" checked />
             <span class="toggle-slider"></span>
             <span class="toggle-text">Include comments</span>
           </label>
 
-          <label class="toggle-switch">
+          <label class="toggle-switch" title="Include the full self-text body of text posts (not just the title). Useful for qualitative analysis of long-form posts.">
             <input type="checkbox" id="includeSelftext" checked />
             <span class="toggle-slider"></span>
             <span class="toggle-text">Include post body text</span>
           </label>
 
-          <label class="toggle-switch">
+          <label class="toggle-switch" title="Filter out posts marked as NSFW (Not Safe For Work) by Reddit. Recommended for most research datasets.">
             <input type="checkbox" id="skipNSFW" />
             <span class="toggle-slider"></span>
             <span class="toggle-text">Skip NSFW posts</span>
           </label>
 
-          <label class="toggle-switch">
+          <label class="toggle-switch" title="Enable keyword-based scoring. Each post and comment is scored by how many keywords from your categories it matches. Great for thematic analysis.">
             <input type="checkbox" id="enableKeywords" />
             <span class="toggle-slider"></span>
             <span class="toggle-text">Keyword analysis</span>
@@ -109,16 +156,19 @@
         <!-- Keyword Section (hidden by default) -->
         <div id="keywordsPanel" class="keywords-panel hidden">
           <div class="keywords-header">
-            <label class="option-label">Keyword categories</label>
-            <button class="btn-text" id="addCategoryBtn">+ Add category</button>
+            <label class="option-label">
+              Keyword categories
+              <span class="info-tooltip" data-tooltip="Define thematic categories with keywords. Each post/comment gets a relevance score based on matches. Results are added as columns in the exported CSV.">?</span>
+            </label>
+            <button class="btn-text" id="addCategoryBtn" title="Add a new keyword category">+ Add category</button>
           </div>
-          <p class="hint">Posts and comments are scored by how many keywords they match. One keyword per line.</p>
+          <p class="hint">Define keyword categories for thematic analysis. Posts and comments are scored by how many keywords they match. One keyword per line. Matched categories appear as columns in your CSV export.</p>
           <div id="keyword-editors"></div>
         </div>
       </div>
 
       <!-- Progress -->
-      <div id="progress" class="progress-card hidden">
+      <div id="progress" class="progress-card glass-card hidden">
         <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
         <p id="statusText">Starting...</p>
       </div>
@@ -132,28 +182,35 @@
       <div id="results" class="results-section hidden">
         <div class="results-header">
           <h2>Results</h2>
+          <p class="results-subtitle">Your dataset is ready. Download in the format that fits your workflow.</p>
         </div>
 
         <div id="summary" class="stats-grid"></div>
 
         <div class="download-bar">
-          <button class="btn-download" id="downloadCsv">
+          <button class="btn-download" id="downloadCsv" title="Download posts as CSV. Includes title, author, score, timestamps, word counts, and keyword matches. Opens directly in Excel, Google Sheets, or R/Python.">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Posts CSV
           </button>
-          <button class="btn-download" id="downloadCommentsCsv">
+          <button class="btn-download" id="downloadCommentsCsv" title="Download all comments as a separate CSV. Each row is one comment with post context, author, score, and keyword matches.">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Comments CSV
           </button>
-          <button class="btn-download" id="downloadJson">
+          <button class="btn-download" id="downloadJson" title="Download the complete dataset as JSON, including nested comments. Best for programmatic analysis with Python, R, or Node.js.">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Full JSON
           </button>
         </div>
 
+        <div class="export-hint">
+          <p><strong>Posts CSV</strong> &mdash; one row per post with title, author, score, timestamps, word counts, and keyword matches</p>
+          <p><strong>Comments CSV</strong> &mdash; one row per comment with post context, useful for discourse analysis</p>
+          <p><strong>Full JSON</strong> &mdash; nested structure with all data, ideal for Python/R scripting</p>
+        </div>
+
         <div class="preview-section">
           <details>
-            <summary>Preview (first 5 posts)</summary>
+            <summary>Preview first 5 posts</summary>
             <div id="preview" class="preview-list"></div>
           </details>
         </div>
@@ -161,7 +218,10 @@
     </main>
 
     <footer>
-      <p>Uses Reddit's public JSON feed. No API keys or authentication required.</p>
+      <div class="footer-content">
+        <p class="footer-main">Built for researchers. No API keys required. All data processing happens client-side.</p>
+        <p class="footer-note">All data processing happens in your browser. Nothing is stored on any server.</p>
+      </div>
     </footer>
   </div>
 

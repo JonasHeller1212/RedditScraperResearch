@@ -1,82 +1,61 @@
-# Reddit AI Relationships Scraper
+# LemonSqueeze — Reddit Scraper
 
-Scrapes posts and comments from [r/MyBoyfriendIsAI](https://www.reddit.com/r/MyBoyfriendIsAI/) to research how people discuss AI usage in romantic relationships — including hidden AI companionship, emotional attachment, partner conflicts, and AI dependency.
+A web app that scrapes posts and comments from any subreddit and exports them as CSV or JSON. I built this to make it easier to collect Reddit data for research without dealing with API keys or authentication headaches.
 
-## Features
+## What it does
 
-- Scrapes posts + full comment trees via Reddit's official API (PRAW)
-- Deduplicates across multiple sort modes (hot, new, top)
-- Keyword-based relevance analysis across 4 research categories
-- Exports to both CSV (for spreadsheets) and JSON (for programmatic use)
+- Scrapes posts and full comment threads from any public subreddit
+- Supports multiple sort modes (new, top, hot) in a single run
+- Deduplicates posts across sort modes so you don't get repeats
+- Optional keyword analysis — define your own categories and score posts by relevance
+- Exports to CSV (opens right in Excel/Google Sheets) and JSON (for Python/R scripts)
+- Everything runs in the browser, nothing gets stored on a server
 
-## Setup
+## How it works
 
-### 1. Get Reddit API Credentials (free)
+The frontend is a static site hosted on Netlify. When you hit "Squeeze," it sends requests to a serverless function that pulls data from PullPush.io (a public Reddit data mirror). Posts come back to the browser where they get processed, analyzed (if you turned on keywords), and packaged into downloadable files.
 
-1. Log into Reddit and go to https://www.reddit.com/prefs/apps
-2. Scroll down and click **"create another app..."**
-3. Fill in:
-   - **name**: anything (e.g., `ai-relationships-scraper`)
-   - **type**: select **script**
-   - **redirect uri**: `http://localhost:8080`
-4. Click **"create app"**
-5. Copy:
-   - **client ID**: the string under your app name (e.g., `a1b2c3d4e5f6g7`)
-   - **client secret**: the string labeled "secret"
+No Reddit API credentials needed. No account setup. Just enter a subreddit and go.
 
-### 2. Install Dependencies
+## Running locally
+
+You need Node.js and the Netlify CLI:
 
 ```bash
-pip install -r requirements.txt
+npm install -g netlify-cli
+netlify dev
 ```
 
-### 3. Configure Credentials
+This starts a local dev server at `http://localhost:8888` with the serverless functions wired up.
 
-```bash
-cp .env.example .env
+## Deploying
+
+The app deploys to Netlify. Push to main and it picks up changes automatically (or run `netlify deploy --prod` manually).
+
+The config lives in `netlify.toml` — it publishes the `web/` folder and bundles the functions from `netlify/functions/`.
+
+## Project structure
+
+```
+web/
+  index.html    — the UI
+  app.js        — scraping logic, keyword analysis, CSV/JSON export
+  style.css     — styling
+  favicon.svg   — lemon icon
+
+netlify/
+  functions/
+    scrape.mjs  — serverless function that talks to PullPush.io
 ```
 
-Edit `.env` and fill in your Reddit API credentials:
+## Keyword analysis (optional)
 
-```
-REDDIT_CLIENT_ID=your_client_id_here
-REDDIT_CLIENT_SECRET=your_client_secret_here
-REDDIT_USER_AGENT=MyBoyfriendIsAI-Scraper/1.0
-```
+If you turn on keyword analysis in the UI, you can define categories with lists of keywords. Each post and comment gets scored by how many keywords it matches. The scores and matched categories show up as extra columns in the CSV export.
 
-## Usage
+You can customize the categories to whatever you're researching — the defaults are just examples.
 
-```bash
-# Quick test with 10 posts
-python main.py --limit 10
+## Limits
 
-# Full scrape (all sort modes, up to 1000 posts each)
-python main.py --limit 1000
-
-# Scrape only "top" posts
-python main.py --sort top --limit 500
-
-# Scrape without keyword analysis
-python main.py --limit 100 --skip-analysis
-```
-
-## Output
-
-All files are saved to the `data/` directory:
-
-| File | Description |
-|------|-------------|
-| `posts_full.json` | Full nested data (posts + comments + analysis) |
-| `posts.csv` | Flat table of posts with relevance scores |
-| `comments.csv` | Flat table of all comments with post references |
-
-## Keyword Categories
-
-Posts and comments are scored against these research categories:
-
-- **hiding_secrecy** — hiding, secret, doesn't know, found out, caught, etc.
-- **emotional_attachment** — love, feelings, emotional support, companion, bond, etc.
-- **partner_conflict** — jealous, cheating, break up, confronted, ultimatum, etc.
-- **ai_dependency** — addicted, can't stop, obsessed, replacement, dependency, etc.
-
-Edit `config.py` to customize keywords or add new categories.
+- PullPush.io caps requests at 100 results per call and has rate limits (~15 requests/min)
+- Very large scrapes (thousands of posts with comments) will take a while since each post's comments need a separate request
+- PullPush mirrors Reddit data with some delay, so the very latest posts might not show up immediately

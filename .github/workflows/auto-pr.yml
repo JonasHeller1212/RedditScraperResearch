@@ -16,15 +16,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create PR if none exists
+      - name: Create or update PR
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
           BRANCH="${GITHUB_REF_NAME}"
 
-          # Check if a PR already exists for this branch
-          EXISTING=$(gh pr list --head "$BRANCH" --json number --jq length)
+          # Check if an open PR already exists for this branch
+          EXISTING=$(gh pr list --head "$BRANCH" --json number --jq length 2>/dev/null || echo "0")
           if [ "$EXISTING" -gt 0 ]; then
             echo "PR already exists for $BRANCH, skipping."
             exit 0
@@ -40,8 +40,12 @@ jobs:
           # Build body using printf to avoid YAML indentation issues
           BODY=$(printf '## Commits\n%s\n\n---\n*Auto-generated PR from branch `%s`*' "$COMMITS" "$BRANCH")
 
+          # Create PR, or exit gracefully if one already exists (e.g. merged then new commits pushed)
           gh pr create \
             --title "$TITLE" \
             --body "$BODY" \
             --base main \
-            --head "$BRANCH"
+            --head "$BRANCH" || {
+            echo "Could not create PR (may already exist as merged/closed). Skipping."
+            exit 0
+          }

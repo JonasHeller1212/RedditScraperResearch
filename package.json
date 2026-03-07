@@ -1,6 +1,6 @@
 {
-  "name": "reddit-ai-relationships-scraper",
+  "name": "lemonsqueeze",
   "version": "1.0.0",
-  "description": "Web-based Reddit scraper for AI relationship research",
+  "description": "Web-based Reddit scraper that exports posts and comments as CSV/JSON",
   "private": true
 }
