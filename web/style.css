@@ -147,6 +147,11 @@ body {
 .logo-icon {
   font-size: 1.3rem;
   animation: lemonBounce 2s ease-in-out infinite;
+  display: inline-flex;
+  align-items: center;
+}
+.logo-icon .lemon-svg {
+  filter: drop-shadow(0 0 6px var(--lemon-glow-strong));
 }
 
 @keyframes lemonBounce {
@@ -172,6 +177,11 @@ body {
   font-size: 4rem;
   margin-bottom: 0.75rem;
   animation: heroSqueeze 3s ease-in-out infinite;
+  display: flex;
+  justify-content: center;
+}
+.hero-icon .lemon-svg-hero {
+  filter: drop-shadow(0 0 20px var(--lemon-glow-strong)) drop-shadow(0 0 40px var(--lemon-glow));
   display: inline-block;
 }
 
