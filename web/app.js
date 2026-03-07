@@ -223,7 +223,7 @@ scrapeBtn.addEventListener("click", async () => {
   const customKeywords = keywordsEnabled ? getCustomKeywords() : {};
   const categories = Object.keys(customKeywords).length > 0 ? customKeywords : DEFAULT_KEYWORDS;
 
-  const batchSize = includeComments ? 25 : 100;
+  const batchSize = includeComments ? 10 : 100;
   const totalTarget = limit * sortModes.length;
 
   // UI state

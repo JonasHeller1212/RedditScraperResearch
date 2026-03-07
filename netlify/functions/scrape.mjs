@@ -168,6 +168,7 @@ export async function handler(event) {
       submissions.sort((a, b) => (b.score || 0) - (a.score || 0));
     }
 
+    // Map all posts first (skip duplicates)
     const posts = [];
     let lastCreatedUtc = null;
 
@@ -177,12 +178,20 @@ export async function handler(event) {
 
       const post = mapPost(raw);
       lastCreatedUtc = raw.created_utc;
-
-      if (includeComments && post.num_comments > 0) {
-        post.comments = await fetchComments(raw.id);
-      }
-
       posts.push(post);
+    }
+
+    // Fetch comments in parallel batches of 5 to stay within timeout
+    if (includeComments) {
+      const PARALLEL = 5;
+      const postsWithComments = posts.filter((p) => p.num_comments > 0);
+      for (let i = 0; i < postsWithComments.length; i += PARALLEL) {
+        const batch = postsWithComments.slice(i, i + PARALLEL);
+        const results = await Promise.all(batch.map((p) => fetchComments(p.id)));
+        for (let j = 0; j < batch.length; j++) {
+          batch[j].comments = results[j];
+        }
+      }
     }
 
     // For pagination: if we got a full batch, use the last post's created_utc as cursor
