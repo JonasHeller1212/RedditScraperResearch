@@ -312,14 +312,14 @@ body {
 .btn-scrape {
   padding: 0 1.75rem;
   background: linear-gradient(135deg, var(--lemon) 0%, var(--orange) 100%);
-  color: #000;
+  color: #1a1a00;
   border: none;
   border-radius: var(--radius);
   font-family: var(--font);
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: 800;
-  letter-spacing: 0.02em;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
@@ -328,6 +328,8 @@ body {
   gap: 0.4rem;
   position: relative;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .btn-scrape::before {
@@ -1061,7 +1063,7 @@ footer {
 }
 
 [data-theme="light"] .btn-scrape {
-  color: #000;
+  color: #1a1a00;
 }
 
 [data-theme="light"] .btn-stop {
