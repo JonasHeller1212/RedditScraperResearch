@@ -123,6 +123,65 @@ function mapPost(child) {
   };
 }
 
+async function analyzeSubreddit(subreddit) {
+  // Fetch subreddit info
+  const aboutUrl = `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/about.json?raw_json=1`;
+  const aboutData = await fetchReddit(aboutUrl);
+  const sub = aboutData?.data || {};
+
+  const info = {
+    name: sub.display_name || subreddit,
+    title: sub.title || "",
+    subscribers: sub.subscribers || 0,
+    active_users: sub.accounts_active || 0,
+    created_utc: sub.created_utc || 0,
+    description: (sub.public_description || "").slice(0, 200),
+    over18: sub.over18 || false,
+  };
+
+  // Probe each sort to estimate available posts by fetching first + last page
+  const probes = [];
+  const sortConfigs = [
+    { sort: "new", timeFilter: "all", label: "New" },
+    { sort: "top", timeFilter: "all", label: "Top (All Time)" },
+    { sort: "top", timeFilter: "year", label: "Top (Year)" },
+    { sort: "top", timeFilter: "month", label: "Top (Month)" },
+    { sort: "hot", timeFilter: "all", label: "Hot" },
+  ];
+
+  // Fetch a small batch from each sort to check if posts exist
+  for (const cfg of sortConfigs) {
+    try {
+      const { children } = await fetchSubmissions(subreddit, 1, null, cfg.sort, cfg.timeFilter);
+      probes.push({
+        sort: cfg.sort,
+        timeFilter: cfg.timeFilter,
+        label: cfg.label,
+        available: children.length > 0,
+        // Reddit caps listing at ~1000 per sort/time combo
+        estimatedMax: children.length > 0 ? 1000 : 0,
+      });
+    } catch {
+      probes.push({ sort: cfg.sort, timeFilter: cfg.timeFilter, label: cfg.label, available: false, estimatedMax: 0 });
+    }
+    await delay(500); // Be gentle
+  }
+
+  // Calculate total estimated unique posts (with overlap discount)
+  const availableSorts = probes.filter((p) => p.available);
+  // Rough estimate: first sort gives ~1000, each additional ~500 unique after dedup
+  const estimated = availableSorts.length > 0
+    ? Math.min(1000 + (availableSorts.length - 1) * 500, availableSorts.length * 1000)
+    : 0;
+
+  return {
+    info,
+    probes,
+    estimatedTotalUnique: estimated,
+    sortConfigs: availableSorts,
+  };
+}
+
 export async function handler(event) {
   const headers = {
     "Access-Control-Allow-Origin": "*",
@@ -141,6 +200,20 @@ export async function handler(event) {
 
   try {
     const body = JSON.parse(event.body);
+
+    // Handle analyze action
+    if (body.action === "analyze") {
+      let sub = (body.subreddit || "").trim();
+      const urlMatch = sub.match(/reddit\.com\/r\/([^/?\s]+)/);
+      if (urlMatch) sub = urlMatch[1];
+      sub = sub.replace(/^r\//, "");
+      if (!sub) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "Subreddit name is required" }) };
+      }
+      const analysis = await analyzeSubreddit(sub);
+      return { statusCode: 200, headers, body: JSON.stringify(analysis) };
+    }
+
     const {
       subreddit,
       sort = "new",
