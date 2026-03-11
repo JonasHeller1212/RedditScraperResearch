@@ -1084,18 +1084,23 @@ footer {
   background: linear-gradient(135deg, var(--lemon), var(--orange));
   border: none;
   border-radius: var(--radius-sm);
-  color: #1a1a00;
+  color: #000;
   font-family: var(--font);
   font-size: 0.9rem;
   font-weight: 700;
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
+  text-shadow: none;
 }
 
 .btn-analyze:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 20px var(--lemon-glow-strong);
+}
+
+.btn-analyze .btn-icon svg {
+  stroke: #000;
 }
 
 .btn-analyze:disabled {

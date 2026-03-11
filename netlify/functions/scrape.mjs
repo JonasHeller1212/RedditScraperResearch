@@ -6,7 +6,7 @@ const USER_AGENT =
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function fetchReddit(url, retries = 3) {
+async function fetchReddit(url, retries = 4) {
   for (let attempt = 0; attempt < retries; attempt++) {
     const resp = await fetch(url, {
       headers: {
@@ -16,24 +16,28 @@ async function fetchReddit(url, retries = 3) {
       },
     });
 
-    if (resp.status === 429) {
-      const wait = 2000 * 2 ** attempt;
-      await delay(wait);
-      continue;
+    // 429 and 403 are both used by Reddit for rate limiting
+    if (resp.status === 429 || resp.status === 403) {
+      if (attempt < retries - 1) {
+        const wait = 3000 * 2 ** attempt; // 3s, 6s, 12s, 24s
+        await delay(wait);
+        continue;
+      }
+      // On final attempt for 403, check if it's actually a private sub vs rate limit
+      if (resp.status === 403) {
+        throw new Error("Reddit blocked this request (403). This is usually temporary rate limiting — wait a minute and try again. If the subreddit is private, it cannot be accessed.");
+      }
+      throw new Error("Reddit rate-limited this request. Please wait a minute and try again.");
     }
 
     if (resp.status === 404) {
       throw new Error("Subreddit or post not found. Check the name/URL and try again.");
     }
 
-    if (resp.status === 403) {
-      throw new Error("This subreddit is private or quarantined. Cannot access its data.");
-    }
-
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
       if (attempt < retries - 1) {
-        const wait = 2000 * 2 ** attempt;
+        const wait = 3000 * 2 ** attempt;
         await delay(wait);
         continue;
       }
@@ -44,7 +48,7 @@ async function fetchReddit(url, retries = 3) {
     return resp.json();
   }
 
-  throw new Error("Reddit rate-limited this request. Waiting and retrying — please try again in a minute.");
+  throw new Error("Reddit rate-limited this request. Please wait a minute and try again.");
 }
 
 async function fetchSubmissions(subreddit, size, after = null, sort = "new", timeFilter = "all") {
@@ -182,37 +186,42 @@ async function analyzeSubreddit(subreddit) {
     over18: sub.over18 || false,
   };
 
-  // Probe each sort to estimate available posts by fetching first + last page
+  // Light probe: only check "new" to confirm subreddit has posts (1 request instead of 7)
+  // We assume all standard sorts are available if the subreddit has any posts at all
   const probes = [];
-  const sortConfigs = [
+  let hasAnyPosts = false;
+
+  try {
+    await delay(1000); // breathing room after about.json
+    const { children } = await fetchSubmissions(subreddit, 1, null, "new", "all");
+    hasAnyPosts = children.length > 0;
+  } catch {
+    hasAnyPosts = false;
+  }
+
+  // All sorts available by default if subreddit has posts — no need to probe each one
+  const allSorts = [
     { sort: "new", timeFilter: "all", label: "New" },
     { sort: "top", timeFilter: "all", label: "Top (All Time)" },
-    { sort: "top", timeFilter: "year", label: "Top (Year)" },
-    { sort: "top", timeFilter: "month", label: "Top (Month)" },
     { sort: "hot", timeFilter: "all", label: "Hot" },
-    { sort: "controversial", timeFilter: "all", label: "Controversial (All Time)" },
+    { sort: "controversial", timeFilter: "all", label: "Controversial" },
     { sort: "rising", timeFilter: "all", label: "Rising" },
   ];
 
-  for (const cfg of sortConfigs) {
-    try {
-      const { children } = await fetchSubmissions(subreddit, 1, null, cfg.sort, cfg.timeFilter);
-      probes.push({
-        sort: cfg.sort,
-        timeFilter: cfg.timeFilter,
-        label: cfg.label,
-        available: children.length > 0,
-        estimatedMax: children.length > 0 ? (cfg.sort === "rising" ? 100 : 1000) : 0,
-      });
-    } catch {
-      probes.push({ sort: cfg.sort, timeFilter: cfg.timeFilter, label: cfg.label, available: false, estimatedMax: 0 });
-    }
-    await delay(500);
+  for (const cfg of allSorts) {
+    probes.push({
+      sort: cfg.sort,
+      timeFilter: cfg.timeFilter,
+      label: cfg.label,
+      available: hasAnyPosts,
+      estimatedMax: hasAnyPosts ? (cfg.sort === "rising" ? 100 : 1000) : 0,
+    });
   }
 
   const availableSorts = probes.filter((p) => p.available);
-  const estimated = availableSorts.length > 0
-    ? Math.min(1000 + (availableSorts.length - 1) * 500, availableSorts.length * 1000)
+  // Conservative estimate: each sort up to 1000, with ~50% overlap between sorts
+  const estimated = hasAnyPosts
+    ? Math.min(availableSorts.length * 700, 4000)
     : 0;
 
   return {
