@@ -47,24 +47,39 @@ const DEFAULT_KEYWORDS = {
 let scrapeResult = null;
 let abortController = null;
 let currentAnalysis = null;
+let threadData = null; // for single-thread scraping
 
-// --- Sort pill toggles ---
-document.querySelectorAll("#sortPills .pill").forEach((pill) => {
-  pill.addEventListener("click", () => pill.classList.toggle("active"));
-});
+// --- Sort pill toggles + time filter logic ---
+const sortPills = document.querySelectorAll("#sortPills .pill");
+const timeFilterBlock = document.getElementById("timeFilterBlock");
+const timeFilterSelect = document.getElementById("timeFilter");
+const timeFilterNote = document.getElementById("timeFilterNote");
 
-// --- Keyword toggle ---
-const enableKeywords = document.getElementById("enableKeywords");
-const keywordsPanel = document.getElementById("keywordsPanel");
+function updateTimeFilterState() {
+  const activeSorts = Array.from(document.querySelectorAll("#sortPills .pill.active")).map(
+    (p) => p.dataset.value
+  );
+  const needsTimeFilter = activeSorts.includes("top") || activeSorts.includes("controversial");
 
-enableKeywords.addEventListener("change", () => {
-  keywordsPanel.classList.toggle("hidden", !enableKeywords.checked);
-  if (enableKeywords.checked && editorsContainer.children.length === 0) {
-    for (const [name, keywords] of Object.entries(DEFAULT_KEYWORDS)) {
-      createKeywordEditor(name, keywords);
-    }
+  if (needsTimeFilter) {
+    timeFilterSelect.disabled = false;
+    timeFilterBlock.classList.remove("disabled");
+    timeFilterNote.textContent = "";
+  } else {
+    timeFilterSelect.disabled = true;
+    timeFilterBlock.classList.add("disabled");
+    timeFilterNote.textContent = "Only applies to Top and Controversial sorts";
   }
+}
+
+sortPills.forEach((pill) => {
+  pill.addEventListener("click", () => {
+    pill.classList.toggle("active");
+    updateTimeFilterState();
+  });
 });
+
+updateTimeFilterState();
 
 // --- Keyword Editors ---
 const editorsContainer = document.getElementById("keyword-editors");
@@ -85,6 +100,18 @@ function createKeywordEditor(name, keywords) {
 
 document.getElementById("addCategoryBtn").addEventListener("click", () => {
   createKeywordEditor("new_category", []);
+});
+
+// Pre-populate keyword editors when advanced section is first opened
+const advancedSection = document.querySelector(".advanced-section");
+let keywordsPopulated = false;
+advancedSection.addEventListener("toggle", () => {
+  if (advancedSection.open && !keywordsPopulated) {
+    for (const [name, keywords] of Object.entries(DEFAULT_KEYWORDS)) {
+      createKeywordEditor(name, keywords);
+    }
+    keywordsPopulated = true;
+  }
 });
 
 function getCustomKeywords() {
@@ -197,7 +224,6 @@ function loadProgress() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    // Expire after 24 hours
     if (Date.now() - data.timestamp > 24 * 60 * 60 * 1000) {
       localStorage.removeItem(STORAGE_KEY);
       return null;
@@ -214,8 +240,6 @@ function clearProgress() {
 
 // --- Time estimate helpers ---
 function estimateTime(postCount, includeComments) {
-  // Rate: ~100 posts per request, ~2s per request
-  // With comments: ~10 posts per batch (each needs comment fetch), ~5s per batch
   if (includeComments) {
     const batches = Math.ceil(postCount / 10);
     const seconds = batches * 5;
@@ -254,7 +278,7 @@ async function apiCall(body, maxRetries = 3) {
     const errMsg = data.error || `Server error (${resp.status})`;
     if (attempt < maxRetries && (resp.status === 429 || resp.status >= 500 || errMsg.includes("rate limit"))) {
       const wait = 5000 * 2 ** attempt;
-      updateProgress(`Rate limited — retrying in ${wait / 1000}s...`);
+      updateProgress(`Reddit rate-limited this request. Waiting ${wait / 1000}s and retrying...`);
       await new Promise((r) => setTimeout(r, wait));
       continue;
     }
@@ -273,7 +297,9 @@ const resultsSection = document.getElementById("results");
 const errorSection = document.getElementById("error");
 const errorText = document.getElementById("errorText");
 const analysisCard = document.getElementById("analysisCard");
+const threadCard = document.getElementById("threadCard");
 const resumeBanner = document.getElementById("resumeBanner");
+const optionsPanel = document.getElementById("optionsPanel");
 
 function updateProgress(message, percent = null) {
   statusText.textContent = message;
@@ -297,22 +323,32 @@ analyzeBtn.addEventListener("click", async () => {
 
   errorSection.classList.add("hidden");
   analysisCard.classList.add("hidden");
+  threadCard.classList.add("hidden");
   resultsSection.classList.add("hidden");
+  optionsPanel.classList.add("hidden");
   progressSection.classList.remove("hidden");
   progressFill.style.width = "0%";
   analyzeBtn.disabled = true;
   analyzeBtn.querySelector(".btn-text").textContent = "Analyzing...";
 
   try {
-    updateProgress("Analyzing subreddit...", 20);
+    updateProgress("Analyzing...", 20);
 
-    const analysis = await apiCall({ action: "analyze", subreddit: subredditInput });
-    currentAnalysis = analysis;
+    const result = await apiCall({ action: "analyze", subreddit: subredditInput });
 
     updateProgress("Analysis complete!", 100);
 
-    // Show analysis card
-    showAnalysis(analysis);
+    if (result.type === "thread") {
+      // Single thread mode
+      threadData = { subreddit: result.subreddit, post: result.post };
+      showThreadResult(result);
+    } else {
+      // Subreddit mode
+      currentAnalysis = result;
+      showAnalysis(result);
+      // Reveal options panel (progressive disclosure)
+      optionsPanel.classList.remove("hidden");
+    }
   } catch (err) {
     showError(err.message);
   } finally {
@@ -322,6 +358,40 @@ analyzeBtn.addEventListener("click", async () => {
   }
 });
 
+// --- Thread result display ---
+function showThreadResult(result) {
+  const post = result.post;
+  const commentCount = (post.comments || []).length;
+
+  document.getElementById("threadTitle").textContent = post.title;
+  document.getElementById("threadMeta").textContent =
+    `u/${post.author} in r/${result.subreddit} — ${new Date(post.created_datetime).toLocaleDateString()}`;
+
+  document.getElementById("threadStats").innerHTML = `
+    <div class="stat-card"><div class="value">1</div><div class="label">Post</div></div>
+    <div class="stat-card"><div class="value">${commentCount.toLocaleString()}</div><div class="label">Comments collected</div></div>
+    <div class="stat-card"><div class="value">${post.score.toLocaleString()}</div><div class="label">Score</div></div>
+    <div class="stat-card"><div class="value">${post.num_comments.toLocaleString()}</div><div class="label">Total comments (Reddit)</div></div>
+  `;
+
+  threadCard.classList.remove("hidden");
+
+  // Set up scrapeResult for downloads
+  scrapeResult = {
+    subreddit: result.subreddit,
+    posts: [post],
+    keywordsEnabled: false,
+    summary: buildSummary([post], false),
+  };
+}
+
+document.getElementById("threadDownloadBtn").addEventListener("click", () => {
+  if (!scrapeResult) return;
+  showResults(scrapeResult);
+  resultsSection.scrollIntoView({ behavior: "smooth" });
+});
+
+// --- Subreddit analysis display ---
 function showAnalysis(analysis) {
   const { info, probes, estimatedTotalUnique } = analysis;
 
@@ -332,7 +402,6 @@ function showAnalysis(analysis) {
   if (info.over18) nsfwBadge.classList.remove("hidden");
   else nsfwBadge.classList.add("hidden");
 
-  // Stats
   const ageYears = info.created_utc
     ? ((Date.now() / 1000 - info.created_utc) / (365.25 * 86400)).toFixed(1)
     : "?";
@@ -349,7 +418,6 @@ function showAnalysis(analysis) {
   const includeComments = document.getElementById("includeComments").checked;
   const limit = parseInt(document.getElementById("limit").value, 10) || 50;
 
-  // Build sort plan display
   const planSortsEl = document.getElementById("planSorts");
   planSortsEl.innerHTML = availableSorts.map((s) => `
     <div class="plan-sort-item">
@@ -358,12 +426,11 @@ function showAnalysis(analysis) {
     </div>
   `).join("");
 
-  // Explainer
   const planExplainer = document.getElementById("planExplainer");
   if (estimatedTotalUnique > 1000) {
-    planExplainer.innerHTML = `This subreddit likely has <strong>more than 1,000 posts</strong>. Reddit limits each listing to ~1,000 results, but by combining multiple sort modes and time filters we can collect up to <strong>~${estimatedTotalUnique.toLocaleString()}</strong> unique posts. Select your sort modes and post limit below, then hit Squeeze.`;
+    planExplainer.innerHTML = `This subreddit likely has <strong>more than 1,000 posts</strong>. Reddit limits each listing to ~1,000 results, but by combining multiple sort modes and time filters we can collect up to <strong>~${estimatedTotalUnique.toLocaleString()}</strong> unique posts. Duplicates are automatically removed.`;
   } else {
-    planExplainer.innerHTML = `We can collect posts using the sort modes below. Each mode returns up to 1,000 posts. Posts are deduplicated across modes.`;
+    planExplainer.innerHTML = `We can collect posts using the sort modes below. Each mode returns up to 1,000 posts. Duplicates across modes are automatically removed.`;
   }
 
   // Time estimate
@@ -398,7 +465,6 @@ async function startScrape(isResume) {
   let startSortIdx = 0, startAfter = null, startModeFetched = 0;
 
   if (saved) {
-    // Resume from saved state
     subreddit = saved.subreddit;
     allPosts = saved.posts;
     seenIds = new Set(saved.seenIds);
@@ -415,7 +481,6 @@ async function startScrape(isResume) {
     customKeywords = saved.settings.customKeywords;
     categories = Object.keys(customKeywords || {}).length > 0 ? customKeywords : DEFAULT_KEYWORDS;
   } else {
-    // Fresh scrape
     const subredditInput = document.getElementById("subreddit").value.trim();
     if (!subredditInput) {
       showError("Please enter a subreddit name or URL.");
@@ -431,6 +496,7 @@ async function startScrape(isResume) {
     }
 
     limit = parseInt(document.getElementById("limit").value, 10) || 50;
+    limit = Math.min(limit, 1000); // Hard cap
     includeComments = document.getElementById("includeComments").checked;
     includeSelftext = document.getElementById("includeSelftext").checked;
     skipNSFW = document.getElementById("skipNSFW").checked;
@@ -444,16 +510,20 @@ async function startScrape(isResume) {
     if (urlMatch) subreddit = urlMatch[1];
     subreddit = subreddit.replace(/^r\//, "");
 
-    // Build sort queue — if >1000 posts wanted and analysis available, use multiple time filters
+    // Build sort queue
     sortQueue = [];
     for (const mode of sortModes) {
       if (mode === "top" && limit > 1000 && currentAnalysis) {
-        // Split top across time filters for more unique results
         sortQueue.push({ sort: "top", timeFilter: "all", label: "Top (All Time)" });
         sortQueue.push({ sort: "top", timeFilter: "year", label: "Top (Year)" });
         sortQueue.push({ sort: "top", timeFilter: "month", label: "Top (Month)" });
+      } else if (mode === "controversial" && limit > 1000 && currentAnalysis) {
+        sortQueue.push({ sort: "controversial", timeFilter: "all", label: "Controversial (All Time)" });
+        sortQueue.push({ sort: "controversial", timeFilter: "year", label: "Controversial (Year)" });
+        sortQueue.push({ sort: "controversial", timeFilter: "month", label: "Controversial (Month)" });
       } else {
-        sortQueue.push({ sort: mode, timeFilter: mode === "top" ? timeFilter : "all", label: mode.charAt(0).toUpperCase() + mode.slice(1) });
+        const tf = (mode === "top" || mode === "controversial") ? timeFilter : "all";
+        sortQueue.push({ sort: mode, timeFilter: tf, label: mode.charAt(0).toUpperCase() + mode.slice(1) });
       }
     }
   }
@@ -484,7 +554,6 @@ async function startScrape(isResume) {
         const overallFetched = allPosts.length;
         const percent = (overallFetched / totalTarget) * 100;
 
-        // Time remaining estimate
         const remainingPosts = totalTarget - overallFetched;
         const etaStr = formatDuration(estimateTime(remainingPosts, includeComments));
         updateProgress(
@@ -543,7 +612,7 @@ async function startScrape(isResume) {
     }
 
     updateProgress("Done!", 100);
-    clearProgress(); // Scrape complete — clear saved state
+    clearProgress();
 
     scrapeResult = {
       subreddit,
@@ -555,8 +624,25 @@ async function startScrape(isResume) {
     showResults(scrapeResult);
   } catch (err) {
     if (err.name === "AbortError") {
-      updateProgress(`Paused — ${allPosts.length} posts saved. You can close this tab and resume later.`, null);
-      // Save on abort too
+      // Show partial data on stop
+      if (allPosts.length > 0) {
+        scrapeResult = {
+          subreddit,
+          posts: allPosts,
+          keywordsEnabled: false,
+          summary: buildSummary(allPosts, false),
+        };
+        updateProgress(
+          `Stopped at ${allPosts.length} posts. Partial data is available for download below.`,
+          (allPosts.length / totalTarget) * 100
+        );
+        showResults(scrapeResult);
+        document.getElementById("resultsSubtitle").textContent =
+          `Scrape stopped early. ${allPosts.length} posts collected — you can still download this partial dataset.`;
+      } else {
+        updateProgress("Stopped — no posts were collected.", null);
+      }
+      // Save for resume
       saveProgress({
         subreddit,
         posts: allPosts,
@@ -569,6 +655,18 @@ async function startScrape(isResume) {
       });
     } else {
       showError(err.message);
+      // Even on error, show partial data if we have some
+      if (allPosts.length > 0) {
+        scrapeResult = {
+          subreddit,
+          posts: allPosts,
+          keywordsEnabled: false,
+          summary: buildSummary(allPosts, false),
+        };
+        showResults(scrapeResult);
+        document.getElementById("resultsSubtitle").textContent =
+          `Error occurred after collecting ${allPosts.length} posts. You can download the partial data below.`;
+      }
       progressSection.classList.add("hidden");
     }
   } finally {
@@ -605,7 +703,6 @@ document.getElementById("discardBtn").addEventListener("click", () => {
   resumeBanner.classList.add("hidden");
 });
 
-// Check on page load
 checkForSavedProgress();
 
 // --- Results display ---
@@ -637,7 +734,7 @@ function showResults(data) {
       (p) => `
     <div class="preview-post">
       <h3><a href="${p.permalink}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a></h3>
-      <div class="meta">u/${escapeHtml(p.author)} &middot; ${p.score} pts &middot; ${p.num_comments} comments &middot; ${new Date(p.created_datetime).toLocaleDateString()}</div>
+      <div class="meta">u/${escapeHtml(p.author)} &middot; ${p.score} pts &middot; ${p.num_comments} comments &middot; ${new Date(p.created_datetime).toLocaleDateString()}${p.link_flair_text ? ` &middot; <span class="badge">${escapeHtml(p.link_flair_text)}</span>` : ""}</div>
       ${
         p.matched_categories && p.matched_categories.length > 0
           ? `<div class="categories">${p.matched_categories.map((c) => `<span class="badge">${formatCategory(c)}</span>`).join("")}</div>`
@@ -728,7 +825,10 @@ function postsToCSV(posts, keywordsEnabled) {
     "id", "subreddit", "title", "selftext", "author",
     "created_utc", "created_datetime", "date", "day_of_week", "hour_utc",
     "score", "upvote_ratio", "num_comments", "permalink",
-    "link_flair_text", "title_word_count", "selftext_word_count",
+    "link_flair_text", "over_18",
+    "edited", "distinguished", "is_crosspost", "crosspost_subreddit",
+    "total_awards_received", "gilded",
+    "title_word_count", "selftext_word_count",
     "title_char_count", "selftext_char_count", "comment_count_actual",
   ];
   if (keywordsEnabled) {
@@ -753,6 +853,13 @@ function postsToCSV(posts, keywordsEnabled) {
       num_comments: p.num_comments,
       permalink: p.permalink,
       link_flair_text: p.link_flair_text || "",
+      over_18: p.over_18 || false,
+      edited: p.edited || false,
+      distinguished: p.distinguished || "",
+      is_crosspost: p.is_crosspost || false,
+      crosspost_subreddit: p.crosspost_subreddit || "",
+      total_awards_received: p.total_awards_received || 0,
+      gilded: p.gilded || 0,
       title_word_count: wordCount(p.title),
       selftext_word_count: wordCount(p.selftext),
       title_char_count: (p.title || "").length,
@@ -775,10 +882,14 @@ function combinedToCSV(posts, keywordsEnabled) {
     "post_id", "subreddit", "post_title", "post_selftext", "post_author",
     "post_created_utc", "post_created_datetime", "post_date", "post_day_of_week", "post_hour_utc",
     "post_score", "post_upvote_ratio", "post_num_comments", "post_permalink", "post_flair",
+    "post_over_18", "post_edited", "post_distinguished",
+    "post_is_crosspost", "post_crosspost_subreddit",
+    "post_total_awards", "post_gilded",
     "post_title_word_count", "post_selftext_word_count",
     "comment_id", "comment_body", "comment_author",
     "comment_created_utc", "comment_created_datetime", "comment_date", "comment_day_of_week", "comment_hour_utc",
     "comment_score", "comment_parent_id", "comment_is_submitter",
+    "comment_depth", "comment_edited", "comment_distinguished", "comment_controversiality",
     "comment_body_word_count",
     "row_type",
   ];
@@ -806,6 +917,13 @@ function combinedToCSV(posts, keywordsEnabled) {
       post_num_comments: p.num_comments,
       post_permalink: p.permalink,
       post_flair: p.link_flair_text || "",
+      post_over_18: p.over_18 || false,
+      post_edited: p.edited || false,
+      post_distinguished: p.distinguished || "",
+      post_is_crosspost: p.is_crosspost || false,
+      post_crosspost_subreddit: p.crosspost_subreddit || "",
+      post_total_awards: p.total_awards_received || 0,
+      post_gilded: p.gilded || 0,
       post_title_word_count: wordCount(p.title),
       post_selftext_word_count: wordCount(p.selftext),
     };
@@ -840,6 +958,10 @@ function combinedToCSV(posts, keywordsEnabled) {
           comment_score: c.score,
           comment_parent_id: c.parent_id,
           comment_is_submitter: c.is_submitter,
+          comment_depth: c.depth ?? "",
+          comment_edited: c.edited || false,
+          comment_distinguished: c.distinguished || "",
+          comment_controversiality: c.controversiality || 0,
           comment_body_word_count: wordCount(c.body),
           row_type: "comment",
         };
@@ -862,6 +984,7 @@ function commentsToCSV(posts, keywordsEnabled) {
     "body", "author", "created_utc", "created_datetime",
     "date", "day_of_week", "hour_utc",
     "score", "parent_id", "is_submitter",
+    "depth", "edited", "distinguished", "controversiality",
     "body_word_count", "body_char_count",
   ];
   if (keywordsEnabled) {
@@ -887,6 +1010,10 @@ function commentsToCSV(posts, keywordsEnabled) {
         score: c.score,
         parent_id: c.parent_id,
         is_submitter: c.is_submitter,
+        depth: c.depth ?? "",
+        edited: c.edited || false,
+        distinguished: c.distinguished || "",
+        controversiality: c.controversiality || 0,
         body_word_count: wordCount(c.body),
         body_char_count: (c.body || "").length,
       };

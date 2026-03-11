@@ -22,6 +22,14 @@ async function fetchReddit(url, retries = 3) {
       continue;
     }
 
+    if (resp.status === 404) {
+      throw new Error("Subreddit or post not found. Check the name/URL and try again.");
+    }
+
+    if (resp.status === 403) {
+      throw new Error("This subreddit is private or quarantined. Cannot access its data.");
+    }
+
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
       if (attempt < retries - 1) {
@@ -36,13 +44,14 @@ async function fetchReddit(url, retries = 3) {
     return resp.json();
   }
 
-  throw new Error("Reddit API rate limit exceeded. Please try again in a minute.");
+  throw new Error("Reddit rate-limited this request. Waiting and retrying — please try again in a minute.");
 }
 
 async function fetchSubmissions(subreddit, size, after = null, sort = "new", timeFilter = "all") {
   const params = new URLSearchParams({ limit: String(Math.min(size, 100)), raw_json: "1" });
 
-  if (sort === "top" && timeFilter) {
+  // Time filter applies to top and controversial sorts
+  if ((sort === "top" || sort === "controversial") && timeFilter) {
     params.set("t", timeFilter);
   }
 
@@ -67,13 +76,37 @@ async function fetchComments(postId, subreddit) {
     if (!data || !Array.isArray(data) || data.length < 2) return [];
 
     const children = data[1]?.data?.children || [];
-    return parseCommentTree(children);
+    return parseCommentTree(children, 0);
   } catch {
     return [];
   }
 }
 
-function parseCommentTree(children) {
+// Scrape a single thread: returns the post + all comments
+async function scrapeThread(subreddit, postId) {
+  const url = `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/comments/${postId}.json?limit=500&depth=10&raw_json=1`;
+  const data = await fetchReddit(url);
+
+  if (!data || !Array.isArray(data) || data.length < 2) {
+    throw new Error("Could not load this thread. The post may have been deleted or the URL is invalid.");
+  }
+
+  // First element is the post listing
+  const postChildren = data[0]?.data?.children || [];
+  if (postChildren.length === 0) {
+    throw new Error("Post not found in thread response.");
+  }
+
+  const post = mapPost(postChildren[0]);
+
+  // Second element is the comment listing
+  const commentChildren = data[1]?.data?.children || [];
+  post.comments = parseCommentTree(commentChildren, 0);
+
+  return post;
+}
+
+function parseCommentTree(children, depth) {
   const comments = [];
   if (!children) return comments;
 
@@ -90,13 +123,17 @@ function parseCommentTree(children) {
       score: d.score || 0,
       parent_id: d.parent_id || "",
       is_submitter: d.is_submitter || false,
+      depth: depth,
+      edited: d.edited ? (typeof d.edited === "number" ? d.edited : true) : false,
+      distinguished: d.distinguished || null,
+      controversiality: d.controversiality || 0,
     });
 
     // Recurse into replies
     const replies = d.replies;
     if (replies && typeof replies === "object" && replies.data) {
       const replyChildren = replies.data.children || [];
-      comments.push(...parseCommentTree(replyChildren));
+      comments.push(...parseCommentTree(replyChildren, depth + 1));
     }
   }
   return comments;
@@ -119,6 +156,12 @@ function mapPost(child) {
     permalink: permalink ? `https://reddit.com${permalink}` : "",
     link_flair_text: p.link_flair_text || "",
     over_18: p.over_18 || false,
+    edited: p.edited ? (typeof p.edited === "number" ? p.edited : true) : false,
+    distinguished: p.distinguished || null,
+    is_crosspost: !!(p.crosspost_parent),
+    crosspost_subreddit: p.crosspost_parent_list?.[0]?.subreddit || "",
+    total_awards_received: p.total_awards_received || 0,
+    gilded: p.gilded || 0,
     comments: [],
   };
 }
@@ -147,9 +190,10 @@ async function analyzeSubreddit(subreddit) {
     { sort: "top", timeFilter: "year", label: "Top (Year)" },
     { sort: "top", timeFilter: "month", label: "Top (Month)" },
     { sort: "hot", timeFilter: "all", label: "Hot" },
+    { sort: "controversial", timeFilter: "all", label: "Controversial (All Time)" },
+    { sort: "rising", timeFilter: "all", label: "Rising" },
   ];
 
-  // Fetch a small batch from each sort to check if posts exist
   for (const cfg of sortConfigs) {
     try {
       const { children } = await fetchSubmissions(subreddit, 1, null, cfg.sort, cfg.timeFilter);
@@ -158,18 +202,15 @@ async function analyzeSubreddit(subreddit) {
         timeFilter: cfg.timeFilter,
         label: cfg.label,
         available: children.length > 0,
-        // Reddit caps listing at ~1000 per sort/time combo
-        estimatedMax: children.length > 0 ? 1000 : 0,
+        estimatedMax: children.length > 0 ? (cfg.sort === "rising" ? 100 : 1000) : 0,
       });
     } catch {
       probes.push({ sort: cfg.sort, timeFilter: cfg.timeFilter, label: cfg.label, available: false, estimatedMax: 0 });
     }
-    await delay(500); // Be gentle
+    await delay(500);
   }
 
-  // Calculate total estimated unique posts (with overlap discount)
   const availableSorts = probes.filter((p) => p.available);
-  // Rough estimate: first sort gives ~1000, each additional ~500 unique after dedup
   const estimated = availableSorts.length > 0
     ? Math.min(1000 + (availableSorts.length - 1) * 500, availableSorts.length * 1000)
     : 0;
@@ -180,6 +221,31 @@ async function analyzeSubreddit(subreddit) {
     estimatedTotalUnique: estimated,
     sortConfigs: availableSorts,
   };
+}
+
+// --- URL parsing helpers ---
+function parseRedditInput(input) {
+  const trimmed = (input || "").trim();
+
+  // Check if it's a post/thread URL: reddit.com/r/sub/comments/id/...
+  const threadMatch = trimmed.match(/reddit\.com\/r\/([^/?\s]+)\/comments\/([^/?\s]+)/);
+  if (threadMatch) {
+    return { type: "thread", subreddit: threadMatch[1], postId: threadMatch[2] };
+  }
+
+  // Check if it's a subreddit URL: reddit.com/r/sub
+  const subMatch = trimmed.match(/reddit\.com\/r\/([^/?\s]+)/);
+  if (subMatch) {
+    return { type: "subreddit", subreddit: subMatch[1] };
+  }
+
+  // Plain text — strip r/ prefix if present
+  const plain = trimmed.replace(/^r\//, "");
+  if (plain) {
+    return { type: "subreddit", subreddit: plain };
+  }
+
+  return { type: "invalid" };
 }
 
 export async function handler(event) {
@@ -203,15 +269,25 @@ export async function handler(event) {
 
     // Handle analyze action
     if (body.action === "analyze") {
-      let sub = (body.subreddit || "").trim();
-      const urlMatch = sub.match(/reddit\.com\/r\/([^/?\s]+)/);
-      if (urlMatch) sub = urlMatch[1];
-      sub = sub.replace(/^r\//, "");
-      if (!sub) {
+      const parsed = parseRedditInput(body.subreddit);
+      if (parsed.type === "thread") {
+        // For thread URLs, return thread info instead of subreddit analysis
+        const post = await scrapeThread(parsed.subreddit, parsed.postId);
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({
+            type: "thread",
+            subreddit: parsed.subreddit,
+            post,
+          }),
+        };
+      }
+      if (parsed.type === "invalid" || !parsed.subreddit) {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "Subreddit name is required" }) };
       }
-      const analysis = await analyzeSubreddit(sub);
-      return { statusCode: 200, headers, body: JSON.stringify(analysis) };
+      const analysis = await analyzeSubreddit(parsed.subreddit);
+      return { statusCode: 200, headers, body: JSON.stringify({ type: "subreddit", ...analysis }) };
     }
 
     const {
@@ -236,7 +312,6 @@ export async function handler(event) {
     const seenIds = new Set(skipIds);
     const effectiveBatch = Math.min(batchSize, 100);
 
-    // `after` is Reddit's cursor string (e.g. "t3_abc123") or null for first page
     const { children, nextAfter } = await fetchSubmissions(
       parsedSubreddit,
       effectiveBatch,
@@ -280,7 +355,6 @@ export async function handler(event) {
       }
     }
 
-    // Reddit provides cursor-based pagination via `after` field
     const done = !nextAfter;
 
     return {

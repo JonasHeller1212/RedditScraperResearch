@@ -1104,6 +1104,79 @@ footer {
   transform: none;
 }
 
+/* Disabled time filter state */
+#timeFilterBlock.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.time-filter-note, .limit-note {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-top: 0.25rem;
+  font-style: italic;
+}
+
+/* Primary download button */
+.btn-download-primary {
+  background: linear-gradient(135deg, var(--lemon), var(--orange));
+  color: #1a1a00;
+  font-size: 0.9rem;
+  padding: 0.75rem 1.5rem;
+  border: none;
+}
+
+.btn-download-primary:hover {
+  background: linear-gradient(135deg, var(--lemon-hover), var(--orange));
+  border-color: transparent;
+}
+
+.download-bar-secondary {
+  margin-top: 0.5rem;
+}
+
+/* Other formats toggle */
+.other-formats {
+  margin-bottom: 1rem;
+}
+
+.other-formats summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  margin-bottom: 0.5rem;
+  user-select: none;
+  font-weight: 500;
+}
+
+.other-formats summary:hover {
+  color: var(--lemon);
+}
+
+/* Advanced keyword section */
+.advanced-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+.advanced-toggle {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  user-select: none;
+  padding: 0.3rem 0;
+}
+
+.advanced-toggle:hover {
+  color: var(--lemon);
+}
+
+.advanced-section .keywords-panel {
+  margin-top: 0.75rem;
+}
+
 /* Resume banner */
 .resume-banner {
   display: flex;
