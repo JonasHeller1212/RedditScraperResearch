@@ -46,24 +46,40 @@ const DEFAULT_KEYWORDS = {
 
 let scrapeResult = null;
 let abortController = null;
+let currentAnalysis = null;
+let threadData = null; // for single-thread scraping
 
-// --- Sort pill toggles ---
-document.querySelectorAll("#sortPills .pill").forEach((pill) => {
-  pill.addEventListener("click", () => pill.classList.toggle("active"));
-});
+// --- Sort pill toggles + time filter logic ---
+const sortPills = document.querySelectorAll("#sortPills .pill");
+const timeFilterBlock = document.getElementById("timeFilterBlock");
+const timeFilterSelect = document.getElementById("timeFilter");
+const timeFilterNote = document.getElementById("timeFilterNote");
 
-// --- Keyword toggle ---
-const enableKeywords = document.getElementById("enableKeywords");
-const keywordsPanel = document.getElementById("keywordsPanel");
+function updateTimeFilterState() {
+  const activeSorts = Array.from(document.querySelectorAll("#sortPills .pill.active")).map(
+    (p) => p.dataset.value
+  );
+  const needsTimeFilter = activeSorts.includes("top") || activeSorts.includes("controversial");
 
-enableKeywords.addEventListener("change", () => {
-  keywordsPanel.classList.toggle("hidden", !enableKeywords.checked);
-  if (enableKeywords.checked && editorsContainer.children.length === 0) {
-    for (const [name, keywords] of Object.entries(DEFAULT_KEYWORDS)) {
-      createKeywordEditor(name, keywords);
-    }
+  if (needsTimeFilter) {
+    timeFilterSelect.disabled = false;
+    timeFilterBlock.classList.remove("disabled");
+    timeFilterNote.textContent = "";
+  } else {
+    timeFilterSelect.disabled = true;
+    timeFilterBlock.classList.add("disabled");
+    timeFilterNote.textContent = "Only applies to Top and Controversial sorts";
   }
+}
+
+sortPills.forEach((pill) => {
+  pill.addEventListener("click", () => {
+    pill.classList.toggle("active");
+    updateTimeFilterState();
+  });
 });
+
+updateTimeFilterState();
 
 // --- Keyword Editors ---
 const editorsContainer = document.getElementById("keyword-editors");
@@ -84,6 +100,18 @@ function createKeywordEditor(name, keywords) {
 
 document.getElementById("addCategoryBtn").addEventListener("click", () => {
   createKeywordEditor("new_category", []);
+});
+
+// Pre-populate keyword editors when advanced section is first opened
+const advancedSection = document.querySelector(".advanced-section");
+let keywordsPopulated = false;
+advancedSection.addEventListener("toggle", () => {
+  if (advancedSection.open && !keywordsPopulated) {
+    for (const [name, keywords] of Object.entries(DEFAULT_KEYWORDS)) {
+      createKeywordEditor(name, keywords);
+    }
+    keywordsPopulated = true;
+  }
 });
 
 function getCustomKeywords() {
@@ -170,16 +198,72 @@ function buildSummary(posts, keywordsEnabled) {
   return summary;
 }
 
-// --- Scrape Orchestration ---
-const scrapeBtn = document.getElementById("scrapeBtn");
-const stopBtn = document.getElementById("stopBtn");
-const progressSection = document.getElementById("progress");
-const progressFill = document.getElementById("progressFill");
-const statusText = document.getElementById("statusText");
-const resultsSection = document.getElementById("results");
-const errorSection = document.getElementById("error");
-const errorText = document.getElementById("errorText");
+// --- Save/Resume system ---
+const STORAGE_KEY = "lemonsqueeze_progress";
 
+function saveProgress(data) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      subreddit: data.subreddit,
+      posts: data.posts,
+      seenIds: Array.from(data.seenIds),
+      sortQueue: data.sortQueue,
+      currentSortIdx: data.currentSortIdx,
+      currentAfter: data.currentAfter,
+      currentModeFetched: data.currentModeFetched,
+      settings: data.settings,
+    }));
+  } catch {
+    // localStorage full or unavailable — silently fail
+  }
+}
+
+function loadProgress() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (Date.now() - data.timestamp > 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function clearProgress() {
+  localStorage.removeItem(STORAGE_KEY);
+}
+
+// --- Time estimate helpers ---
+function estimateTime(postCount, includeComments) {
+  if (includeComments) {
+    const batches = Math.ceil(postCount / 10);
+    const seconds = batches * 5;
+    return seconds;
+  } else {
+    const batches = Math.ceil(postCount / 100);
+    const seconds = batches * 2;
+    return seconds;
+  }
+}
+
+function formatDuration(seconds) {
+  if (seconds < 60) return `~${seconds}s`;
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return s > 0 ? `~${m}m ${s}s` : `~${m}m`;
+  }
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return m > 0 ? `~${h}h ${m}m` : `~${h}h`;
+}
+
+// --- API call helper ---
 async function apiCall(body, maxRetries = 3) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const resp = await fetch("/api/scrape", {
@@ -192,16 +276,30 @@ async function apiCall(body, maxRetries = 3) {
     if (resp.ok) return data;
 
     const errMsg = data.error || `Server error (${resp.status})`;
-    // Retry on rate limit or server errors, but not on client errors
     if (attempt < maxRetries && (resp.status === 429 || resp.status >= 500 || errMsg.includes("rate limit"))) {
-      const wait = 5000 * 2 ** attempt; // 5s, 10s, 20s
-      updateProgress(`Rate limited — retrying in ${wait / 1000}s...`);
+      const wait = 5000 * 2 ** attempt;
+      updateProgress(`Reddit rate-limited this request. Waiting ${wait / 1000}s and retrying...`);
       await new Promise((r) => setTimeout(r, wait));
       continue;
     }
     throw new Error(errMsg);
   }
 }
+
+// --- UI references ---
+const analyzeBtn = document.getElementById("analyzeBtn");
+const scrapeBtn = document.getElementById("scrapeBtn");
+const stopBtn = document.getElementById("stopBtn");
+const progressSection = document.getElementById("progress");
+const progressFill = document.getElementById("progressFill");
+const statusText = document.getElementById("statusText");
+const resultsSection = document.getElementById("results");
+const errorSection = document.getElementById("error");
+const errorText = document.getElementById("errorText");
+const analysisCard = document.getElementById("analysisCard");
+const threadCard = document.getElementById("threadCard");
+const resumeBanner = document.getElementById("resumeBanner");
+const optionsPanel = document.getElementById("optionsPanel");
 
 function updateProgress(message, percent = null) {
   statusText.textContent = message;
@@ -210,84 +308,274 @@ function updateProgress(message, percent = null) {
   }
 }
 
-scrapeBtn.addEventListener("click", async () => {
+function showError(msg) {
+  errorSection.classList.remove("hidden");
+  errorText.textContent = msg;
+}
+
+// --- Analyze flow ---
+analyzeBtn.addEventListener("click", async () => {
   const subredditInput = document.getElementById("subreddit").value.trim();
   if (!subredditInput) {
     showError("Please enter a subreddit name or URL.");
     return;
   }
 
-  const sortModes = Array.from(document.querySelectorAll("#sortPills .pill.active")).map(
-    (p) => p.dataset.value
-  );
-  if (sortModes.length === 0) {
-    showError("Please select at least one sort mode.");
-    return;
+  errorSection.classList.add("hidden");
+  analysisCard.classList.add("hidden");
+  threadCard.classList.add("hidden");
+  resultsSection.classList.add("hidden");
+  optionsPanel.classList.add("hidden");
+  progressSection.classList.remove("hidden");
+  progressFill.style.width = "0%";
+  analyzeBtn.disabled = true;
+  analyzeBtn.querySelector(".btn-text").textContent = "Analyzing...";
+
+  try {
+    updateProgress("Analyzing...", 20);
+
+    const result = await apiCall({ action: "analyze", subreddit: subredditInput });
+
+    updateProgress("Analysis complete!", 100);
+
+    if (result.type === "thread") {
+      // Single thread mode
+      threadData = { subreddit: result.subreddit, post: result.post };
+      showThreadResult(result);
+    } else {
+      // Subreddit mode
+      currentAnalysis = result;
+      showAnalysis(result);
+      // Reveal options panel (progressive disclosure)
+      optionsPanel.classList.remove("hidden");
+    }
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    progressSection.classList.add("hidden");
+    analyzeBtn.disabled = false;
+    analyzeBtn.querySelector(".btn-text").textContent = "Analyze";
+  }
+});
+
+// --- Thread result display ---
+function showThreadResult(result) {
+  const post = result.post;
+  const commentCount = (post.comments || []).length;
+
+  document.getElementById("threadTitle").textContent = post.title;
+  document.getElementById("threadMeta").textContent =
+    `u/${post.author} in r/${result.subreddit} — ${new Date(post.created_datetime).toLocaleDateString()}`;
+
+  document.getElementById("threadStats").innerHTML = `
+    <div class="stat-card"><div class="value">1</div><div class="label">Post</div></div>
+    <div class="stat-card"><div class="value">${commentCount.toLocaleString()}</div><div class="label">Comments collected</div></div>
+    <div class="stat-card"><div class="value">${post.score.toLocaleString()}</div><div class="label">Score</div></div>
+    <div class="stat-card"><div class="value">${post.num_comments.toLocaleString()}</div><div class="label">Total comments (Reddit)</div></div>
+  `;
+
+  threadCard.classList.remove("hidden");
+
+  // Set up scrapeResult for downloads
+  scrapeResult = {
+    subreddit: result.subreddit,
+    posts: [post],
+    keywordsEnabled: false,
+    summary: buildSummary([post], false),
+  };
+}
+
+document.getElementById("threadDownloadBtn").addEventListener("click", () => {
+  if (!scrapeResult) return;
+  showResults(scrapeResult);
+  resultsSection.scrollIntoView({ behavior: "smooth" });
+});
+
+// --- Subreddit analysis display ---
+function showAnalysis(analysis) {
+  const { info, probes, estimatedTotalUnique } = analysis;
+
+  document.getElementById("analysisTitle").textContent = `r/${info.name}`;
+  document.getElementById("analysisDesc").textContent = info.description || info.title || "";
+
+  const nsfwBadge = document.getElementById("analysisNsfw");
+  if (info.over18) nsfwBadge.classList.remove("hidden");
+  else nsfwBadge.classList.add("hidden");
+
+  const ageYears = info.created_utc
+    ? ((Date.now() / 1000 - info.created_utc) / (365.25 * 86400)).toFixed(1)
+    : "?";
+
+  document.getElementById("analysisStats").innerHTML = `
+    <div class="stat-card"><div class="value">${info.subscribers.toLocaleString()}</div><div class="label">Subscribers</div></div>
+    <div class="stat-card"><div class="value">${info.active_users.toLocaleString()}</div><div class="label">Online now</div></div>
+    <div class="stat-card"><div class="value">${estimatedTotalUnique.toLocaleString()}</div><div class="label">Est. collectible posts</div></div>
+    <div class="stat-card"><div class="value">${ageYears}y</div><div class="label">Community age</div></div>
+  `;
+
+  // Collection plan
+  const availableSorts = probes.filter((p) => p.available);
+  const includeComments = document.getElementById("includeComments").checked;
+  const limit = parseInt(document.getElementById("limit").value, 10) || 50;
+
+  const planSortsEl = document.getElementById("planSorts");
+  planSortsEl.innerHTML = availableSorts.map((s) => `
+    <div class="plan-sort-item">
+      <span class="plan-sort-label">${s.label}</span>
+      <span class="plan-sort-max">up to ${Math.min(s.estimatedMax, limit).toLocaleString()} posts</span>
+    </div>
+  `).join("");
+
+  const planExplainer = document.getElementById("planExplainer");
+  if (estimatedTotalUnique > 1000) {
+    planExplainer.innerHTML = `This subreddit likely has <strong>more than 1,000 posts</strong>. Reddit limits each listing to ~1,000 results, but by combining multiple sort modes and time filters we can collect up to <strong>~${estimatedTotalUnique.toLocaleString()}</strong> unique posts. Duplicates are automatically removed.`;
+  } else {
+    planExplainer.innerHTML = `We can collect posts using the sort modes below. Each mode returns up to 1,000 posts. Duplicates across modes are automatically removed.`;
   }
 
-  const limit = parseInt(document.getElementById("limit").value, 10) || 50;
-  const includeComments = document.getElementById("includeComments").checked;
-  const includeSelftext = document.getElementById("includeSelftext").checked;
-  const skipNSFW = document.getElementById("skipNSFW").checked;
-  const keywordsEnabled = document.getElementById("enableKeywords").checked;
-  const timeFilter = document.getElementById("timeFilter").value;
-  const customKeywords = keywordsEnabled ? getCustomKeywords() : {};
-  const categories = Object.keys(customKeywords).length > 0 ? customKeywords : DEFAULT_KEYWORDS;
+  // Time estimate
+  const selectedSorts = Array.from(document.querySelectorAll("#sortPills .pill.active"));
+  const totalPosts = Math.min(limit * Math.max(selectedSorts.length, 1), estimatedTotalUnique);
+  const etaSeconds = estimateTime(totalPosts, includeComments);
+  const planEstimate = document.getElementById("planEstimate");
+  planEstimate.innerHTML = `
+    <div class="estimate-row">
+      <span>Estimated posts to collect:</span>
+      <strong>${totalPosts.toLocaleString()}</strong>
+    </div>
+    <div class="estimate-row">
+      <span>Estimated time${includeComments ? " (with comments)" : ""}:</span>
+      <strong>${formatDuration(etaSeconds)}</strong>
+    </div>
+    <div class="estimate-hint">You can close this tab during collection and resume later — progress is saved automatically.</div>
+  `;
+
+  analysisCard.classList.remove("hidden");
+}
+
+// --- Scrape Orchestration ---
+scrapeBtn.addEventListener("click", () => startScrape(false));
+
+async function startScrape(isResume) {
+  const saved = isResume ? loadProgress() : null;
+
+  let subreddit, sortQueue, limit, includeComments, includeSelftext, skipNSFW;
+  let keywordsEnabled, timeFilter, customKeywords, categories;
+  let allPosts = [], seenIds = new Set();
+  let startSortIdx = 0, startAfter = null, startModeFetched = 0;
+
+  if (saved) {
+    subreddit = saved.subreddit;
+    allPosts = saved.posts;
+    seenIds = new Set(saved.seenIds);
+    sortQueue = saved.sortQueue;
+    startSortIdx = saved.currentSortIdx;
+    startAfter = saved.currentAfter;
+    startModeFetched = saved.currentModeFetched;
+    limit = saved.settings.limit;
+    includeComments = saved.settings.includeComments;
+    includeSelftext = saved.settings.includeSelftext;
+    skipNSFW = saved.settings.skipNSFW;
+    keywordsEnabled = saved.settings.keywordsEnabled;
+    timeFilter = saved.settings.timeFilter;
+    customKeywords = saved.settings.customKeywords;
+    categories = Object.keys(customKeywords || {}).length > 0 ? customKeywords : DEFAULT_KEYWORDS;
+  } else {
+    const subredditInput = document.getElementById("subreddit").value.trim();
+    if (!subredditInput) {
+      showError("Please enter a subreddit name or URL.");
+      return;
+    }
+
+    const sortModes = Array.from(document.querySelectorAll("#sortPills .pill.active")).map(
+      (p) => p.dataset.value
+    );
+    if (sortModes.length === 0) {
+      showError("Please select at least one sort mode.");
+      return;
+    }
+
+    limit = parseInt(document.getElementById("limit").value, 10) || 50;
+    limit = Math.min(limit, 1000); // Hard cap
+    includeComments = document.getElementById("includeComments").checked;
+    includeSelftext = document.getElementById("includeSelftext").checked;
+    skipNSFW = document.getElementById("skipNSFW").checked;
+    keywordsEnabled = document.getElementById("enableKeywords").checked;
+    timeFilter = document.getElementById("timeFilter").value;
+    customKeywords = keywordsEnabled ? getCustomKeywords() : {};
+    categories = Object.keys(customKeywords).length > 0 ? customKeywords : DEFAULT_KEYWORDS;
+
+    subreddit = subredditInput;
+    const urlMatch = subreddit.match(/reddit\.com\/r\/([^/?\s]+)/);
+    if (urlMatch) subreddit = urlMatch[1];
+    subreddit = subreddit.replace(/^r\//, "");
+
+    // Build sort queue
+    sortQueue = [];
+    for (const mode of sortModes) {
+      if (mode === "top" && limit > 1000 && currentAnalysis) {
+        sortQueue.push({ sort: "top", timeFilter: "all", label: "Top (All Time)" });
+        sortQueue.push({ sort: "top", timeFilter: "year", label: "Top (Year)" });
+        sortQueue.push({ sort: "top", timeFilter: "month", label: "Top (Month)" });
+      } else if (mode === "controversial" && limit > 1000 && currentAnalysis) {
+        sortQueue.push({ sort: "controversial", timeFilter: "all", label: "Controversial (All Time)" });
+        sortQueue.push({ sort: "controversial", timeFilter: "year", label: "Controversial (Year)" });
+        sortQueue.push({ sort: "controversial", timeFilter: "month", label: "Controversial (Month)" });
+      } else {
+        const tf = (mode === "top" || mode === "controversial") ? timeFilter : "all";
+        sortQueue.push({ sort: mode, timeFilter: tf, label: mode.charAt(0).toUpperCase() + mode.slice(1) });
+      }
+    }
+  }
 
   const batchSize = includeComments ? 10 : 100;
-  const totalTarget = limit * sortModes.length;
+  const totalTarget = limit * sortQueue.length;
 
   // UI state
   abortController = new AbortController();
   progressSection.classList.remove("hidden");
   resultsSection.classList.add("hidden");
   errorSection.classList.add("hidden");
+  resumeBanner.classList.add("hidden");
   scrapeBtn.classList.add("hidden");
   stopBtn.classList.remove("hidden");
   progressFill.style.width = "0%";
-  updateProgress("Starting scrape...");
+  updateProgress(isResume ? `Resuming... (${allPosts.length} posts already collected)` : "Starting squeeze...");
+
+  const settings = { limit, includeComments, includeSelftext, skipNSFW, keywordsEnabled, timeFilter, customKeywords };
 
   try {
-    const allPosts = [];
-    const seenIds = new Set();
-
-    let subreddit = subredditInput;
-    const urlMatch = subreddit.match(/reddit\.com\/r\/([^/?\s]+)/);
-    if (urlMatch) subreddit = urlMatch[1];
-    subreddit = subreddit.replace(/^r\//, "");
-
-    for (let modeIdx = 0; modeIdx < sortModes.length; modeIdx++) {
-      const mode = sortModes[modeIdx];
-      let after = null;
-      let modeFetched = 0;
+    for (let modeIdx = startSortIdx; modeIdx < sortQueue.length; modeIdx++) {
+      const mode = sortQueue[modeIdx];
+      let after = modeIdx === startSortIdx ? startAfter : null;
+      let modeFetched = modeIdx === startSortIdx ? startModeFetched : 0;
 
       while (modeFetched < limit) {
-        const modeLabel = mode.charAt(0).toUpperCase() + mode.slice(1);
         const overallFetched = allPosts.length;
         const percent = (overallFetched / totalTarget) * 100;
+
+        const remainingPosts = totalTarget - overallFetched;
+        const etaStr = formatDuration(estimateTime(remainingPosts, includeComments));
         updateProgress(
-          `Fetching "${modeLabel}" posts from r/${subreddit}... (${overallFetched} posts so far)`,
+          `${mode.label}: ${overallFetched} posts collected (${etaStr} remaining)`,
           percent
         );
 
         const batchResp = await apiCall({
           subreddit,
-          sort: mode,
+          sort: mode.sort,
           batchSize: Math.min(batchSize, limit - modeFetched),
           after,
           includeComments,
           skipIds: Array.from(seenIds),
-          timeFilter: mode === "top" ? timeFilter : undefined,
+          timeFilter: mode.timeFilter,
         });
 
         let newPosts = batchResp.posts.filter((p) => !seenIds.has(p.id));
 
-        // Apply NSFW filter client-side
         if (skipNSFW) {
           newPosts = newPosts.filter((p) => !p.over_18);
         }
-
-        // Strip selftext if not wanted
         if (!includeSelftext) {
           newPosts.forEach((p) => { p.selftext = ""; });
         }
@@ -297,6 +585,18 @@ scrapeBtn.addEventListener("click", async () => {
           allPosts.push(p);
           modeFetched++;
         }
+
+        // Save progress every batch
+        saveProgress({
+          subreddit,
+          posts: allPosts,
+          seenIds,
+          sortQueue,
+          currentSortIdx: modeIdx,
+          currentAfter: batchResp.after,
+          currentModeFetched: modeFetched,
+          settings,
+        });
 
         if (batchResp.done || newPosts.length === 0) break;
         after = batchResp.after;
@@ -312,6 +612,7 @@ scrapeBtn.addEventListener("click", async () => {
     }
 
     updateProgress("Done!", 100);
+    clearProgress();
 
     scrapeResult = {
       subreddit,
@@ -323,9 +624,49 @@ scrapeBtn.addEventListener("click", async () => {
     showResults(scrapeResult);
   } catch (err) {
     if (err.name === "AbortError") {
-      updateProgress("Stopped by user.", null);
+      // Show partial data on stop
+      if (allPosts.length > 0) {
+        scrapeResult = {
+          subreddit,
+          posts: allPosts,
+          keywordsEnabled: false,
+          summary: buildSummary(allPosts, false),
+        };
+        updateProgress(
+          `Stopped at ${allPosts.length} posts. Partial data is available for download below.`,
+          (allPosts.length / totalTarget) * 100
+        );
+        showResults(scrapeResult);
+        document.getElementById("resultsSubtitle").textContent =
+          `Scrape stopped early. ${allPosts.length} posts collected — you can still download this partial dataset.`;
+      } else {
+        updateProgress("Stopped — no posts were collected.", null);
+      }
+      // Save for resume
+      saveProgress({
+        subreddit,
+        posts: allPosts,
+        seenIds,
+        sortQueue,
+        currentSortIdx: startSortIdx,
+        currentAfter: null,
+        currentModeFetched: 0,
+        settings,
+      });
     } else {
       showError(err.message);
+      // Even on error, show partial data if we have some
+      if (allPosts.length > 0) {
+        scrapeResult = {
+          subreddit,
+          posts: allPosts,
+          keywordsEnabled: false,
+          summary: buildSummary(allPosts, false),
+        };
+        showResults(scrapeResult);
+        document.getElementById("resultsSubtitle").textContent =
+          `Error occurred after collecting ${allPosts.length} posts. You can download the partial data below.`;
+      }
       progressSection.classList.add("hidden");
     }
   } finally {
@@ -333,17 +674,38 @@ scrapeBtn.addEventListener("click", async () => {
     stopBtn.classList.add("hidden");
     abortController = null;
   }
-});
+}
 
 stopBtn.addEventListener("click", () => {
   if (abortController) abortController.abort();
 });
 
-function showError(msg) {
-  errorSection.classList.remove("hidden");
-  errorText.textContent = msg;
+// --- Resume banner ---
+function checkForSavedProgress() {
+  const saved = loadProgress();
+  if (!saved) return;
+
+  const ago = Math.round((Date.now() - saved.timestamp) / 60000);
+  const agoStr = ago < 1 ? "just now" : ago < 60 ? `${ago}m ago` : `${Math.round(ago / 60)}h ago`;
+
+  document.getElementById("resumeDetails").textContent =
+    `r/${saved.subreddit} — ${saved.posts.length} posts collected (saved ${agoStr})`;
+  resumeBanner.classList.remove("hidden");
 }
 
+document.getElementById("resumeBtn").addEventListener("click", () => {
+  resumeBanner.classList.add("hidden");
+  startScrape(true);
+});
+
+document.getElementById("discardBtn").addEventListener("click", () => {
+  clearProgress();
+  resumeBanner.classList.add("hidden");
+});
+
+checkForSavedProgress();
+
+// --- Results display ---
 function showResults(data) {
   resultsSection.classList.remove("hidden");
   const s = data.summary;
@@ -372,7 +734,7 @@ function showResults(data) {
       (p) => `
     <div class="preview-post">
       <h3><a href="${p.permalink}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a></h3>
-      <div class="meta">u/${escapeHtml(p.author)} &middot; ${p.score} pts &middot; ${p.num_comments} comments &middot; ${new Date(p.created_datetime).toLocaleDateString()}</div>
+      <div class="meta">u/${escapeHtml(p.author)} &middot; ${p.score} pts &middot; ${p.num_comments} comments &middot; ${new Date(p.created_datetime).toLocaleDateString()}${p.link_flair_text ? ` &middot; <span class="badge">${escapeHtml(p.link_flair_text)}</span>` : ""}</div>
       ${
         p.matched_categories && p.matched_categories.length > 0
           ? `<div class="categories">${p.matched_categories.map((c) => `<span class="badge">${formatCategory(c)}</span>`).join("")}</div>`
@@ -463,7 +825,10 @@ function postsToCSV(posts, keywordsEnabled) {
     "id", "subreddit", "title", "selftext", "author",
     "created_utc", "created_datetime", "date", "day_of_week", "hour_utc",
     "score", "upvote_ratio", "num_comments", "permalink",
-    "link_flair_text", "title_word_count", "selftext_word_count",
+    "link_flair_text", "over_18",
+    "edited", "distinguished", "is_crosspost", "crosspost_subreddit",
+    "total_awards_received", "gilded",
+    "title_word_count", "selftext_word_count",
     "title_char_count", "selftext_char_count", "comment_count_actual",
   ];
   if (keywordsEnabled) {
@@ -488,6 +853,13 @@ function postsToCSV(posts, keywordsEnabled) {
       num_comments: p.num_comments,
       permalink: p.permalink,
       link_flair_text: p.link_flair_text || "",
+      over_18: p.over_18 || false,
+      edited: p.edited || false,
+      distinguished: p.distinguished || "",
+      is_crosspost: p.is_crosspost || false,
+      crosspost_subreddit: p.crosspost_subreddit || "",
+      total_awards_received: p.total_awards_received || 0,
+      gilded: p.gilded || 0,
       title_word_count: wordCount(p.title),
       selftext_word_count: wordCount(p.selftext),
       title_char_count: (p.title || "").length,
@@ -510,10 +882,14 @@ function combinedToCSV(posts, keywordsEnabled) {
     "post_id", "subreddit", "post_title", "post_selftext", "post_author",
     "post_created_utc", "post_created_datetime", "post_date", "post_day_of_week", "post_hour_utc",
     "post_score", "post_upvote_ratio", "post_num_comments", "post_permalink", "post_flair",
+    "post_over_18", "post_edited", "post_distinguished",
+    "post_is_crosspost", "post_crosspost_subreddit",
+    "post_total_awards", "post_gilded",
     "post_title_word_count", "post_selftext_word_count",
     "comment_id", "comment_body", "comment_author",
     "comment_created_utc", "comment_created_datetime", "comment_date", "comment_day_of_week", "comment_hour_utc",
     "comment_score", "comment_parent_id", "comment_is_submitter",
+    "comment_depth", "comment_edited", "comment_distinguished", "comment_controversiality",
     "comment_body_word_count",
     "row_type",
   ];
@@ -541,6 +917,13 @@ function combinedToCSV(posts, keywordsEnabled) {
       post_num_comments: p.num_comments,
       post_permalink: p.permalink,
       post_flair: p.link_flair_text || "",
+      post_over_18: p.over_18 || false,
+      post_edited: p.edited || false,
+      post_distinguished: p.distinguished || "",
+      post_is_crosspost: p.is_crosspost || false,
+      post_crosspost_subreddit: p.crosspost_subreddit || "",
+      post_total_awards: p.total_awards_received || 0,
+      post_gilded: p.gilded || 0,
       post_title_word_count: wordCount(p.title),
       post_selftext_word_count: wordCount(p.selftext),
     };
@@ -552,7 +935,6 @@ function combinedToCSV(posts, keywordsEnabled) {
 
     const comments = p.comments || [];
     if (comments.length === 0) {
-      // Post with no comments — still include as its own row
       const row = { ...postFields, row_type: "post_only" };
       if (keywordsEnabled) {
         row.comment_relevance_score = "";
@@ -576,6 +958,10 @@ function combinedToCSV(posts, keywordsEnabled) {
           comment_score: c.score,
           comment_parent_id: c.parent_id,
           comment_is_submitter: c.is_submitter,
+          comment_depth: c.depth ?? "",
+          comment_edited: c.edited || false,
+          comment_distinguished: c.distinguished || "",
+          comment_controversiality: c.controversiality || 0,
           comment_body_word_count: wordCount(c.body),
           row_type: "comment",
         };
@@ -598,6 +984,7 @@ function commentsToCSV(posts, keywordsEnabled) {
     "body", "author", "created_utc", "created_datetime",
     "date", "day_of_week", "hour_utc",
     "score", "parent_id", "is_submitter",
+    "depth", "edited", "distinguished", "controversiality",
     "body_word_count", "body_char_count",
   ];
   if (keywordsEnabled) {
@@ -623,6 +1010,10 @@ function commentsToCSV(posts, keywordsEnabled) {
         score: c.score,
         parent_id: c.parent_id,
         is_submitter: c.is_submitter,
+        depth: c.depth ?? "",
+        edited: c.edited || false,
+        distinguished: c.distinguished || "",
+        controversiality: c.controversiality || 0,
         body_word_count: wordCount(c.body),
         body_char_count: (c.body || "").length,
       };

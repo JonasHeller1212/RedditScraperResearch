@@ -38,48 +38,71 @@
         <p class="hero-subtitle">Collect posts, comments, and metadata into structured CSV and JSON datasets. Built for academic research.</p>
       </div>
 
-      <!-- How it works -->
-      <div class="how-it-works glass-card">
-        <div class="how-steps">
-          <div class="how-step">
-            <span class="how-step-num">1</span>
-            <div>
-              <strong>Enter a subreddit</strong>
-              <span class="how-step-desc">Type a name like "AskReddit" or paste a full Reddit URL</span>
-            </div>
-          </div>
-          <div class="how-step">
-            <span class="how-step-num">2</span>
-            <div>
-              <strong>Configure &amp; squeeze</strong>
-              <span class="how-step-desc">Choose sort modes, limits, and optional keyword filters</span>
-            </div>
-          </div>
-          <div class="how-step">
-            <span class="how-step-num">3</span>
-            <div>
-              <strong>Download your dataset</strong>
-              <span class="how-step-desc">Get structured CSV or JSON files ready for analysis</span>
-            </div>
-          </div>
+      <!-- Resume Banner (shown when there's saved progress) -->
+      <div id="resumeBanner" class="resume-banner glass-card hidden">
+        <div class="resume-info">
+          <strong>Unfinished squeeze found</strong>
+          <p id="resumeDetails"></p>
+        </div>
+        <div class="resume-actions">
+          <button class="btn-resume" id="resumeBtn">Resume</button>
+          <button class="btn-discard" id="discardBtn">Discard</button>
         </div>
       </div>
 
       <!-- Subreddit Input -->
       <div class="input-group">
-        <div class="input-wrapper" title="Enter a subreddit name (e.g. 'AskReddit') or paste a full Reddit URL">
+        <div class="input-wrapper" title="Enter a subreddit name, or paste a full Reddit URL (subreddit or specific post)">
           <span class="input-prefix">r/</span>
-          <input type="text" id="subreddit" placeholder="e.g. AskReddit, science, or paste a reddit.com URL" autocomplete="off" spellcheck="false" />
+          <input type="text" id="subreddit" placeholder="AskReddit, or paste any reddit.com URL (subreddit or post)" autocomplete="off" spellcheck="false" />
         </div>
-        <button class="btn-scrape" id="scrapeBtn" title="Start collecting posts from this subreddit">
-          <span class="btn-text">Squeeze</span>
-          <span class="btn-icon"><svg width="20" height="20" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><ellipse cx="16" cy="17" rx="11" ry="13" fill="#FDD835"/><path d="M16 30Q13 28 14 26Q16 27 18 26Q19 28 16 30Z" fill="#F9A825"/><ellipse cx="16" cy="17" rx="11" ry="13" fill="none" stroke="#F9A825" stroke-width=".8"/><path d="M16 4.5Q15.5 3 15 2" fill="none" stroke="#6D4C41" stroke-width="1.2" stroke-linecap="round"/><path d="M15 3Q11 1 10 3Q11 5 15 4Z" fill="#43A047"/><path d="M15.5 3.5Q19 1 20 3Q19 5 15.5 4.5Z" fill="#66BB6A"/></svg></span>
+        <button class="btn-analyze" id="analyzeBtn" title="Analyze this subreddit or thread before collecting data">
+          <span class="btn-text">Analyze</span>
+          <span class="btn-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
         </button>
         <button class="btn-stop hidden" id="stopBtn" title="Stop the scrape (data collected so far will be kept)">Stop</button>
       </div>
 
-      <!-- Scrape Options -->
-      <div class="options-panel glass-card">
+      <!-- Thread Result (for single post URL) -->
+      <div id="threadCard" class="analysis-card glass-card hidden">
+        <div class="analysis-header">
+          <h2 id="threadTitle">Thread</h2>
+        </div>
+        <p id="threadMeta" class="analysis-desc"></p>
+        <div id="threadStats" class="stats-grid"></div>
+        <div class="analysis-actions">
+          <button class="btn-scrape" id="threadDownloadBtn">
+            <span class="btn-text">Download Thread Data</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Analysis Results Card (for subreddit) -->
+      <div id="analysisCard" class="analysis-card glass-card hidden">
+        <div class="analysis-header">
+          <h2 id="analysisTitle">Community Analysis</h2>
+          <span id="analysisNsfw" class="badge badge-nsfw hidden">NSFW</span>
+        </div>
+        <p id="analysisDesc" class="analysis-desc"></p>
+        <div id="analysisStats" class="stats-grid"></div>
+
+        <div class="collection-plan">
+          <h3>Collection Plan</h3>
+          <p class="hint" id="planExplainer"></p>
+          <div id="planSorts" class="plan-sorts"></div>
+          <div class="plan-estimate" id="planEstimate"></div>
+        </div>
+
+        <div class="analysis-actions">
+          <button class="btn-scrape" id="scrapeBtn" title="Start collecting posts from this subreddit">
+            <span class="btn-text">Squeeze Data</span>
+            <span class="btn-icon"><svg width="20" height="20" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><ellipse cx="16" cy="17" rx="11" ry="13" fill="#FDD835"/><path d="M16 30Q13 28 14 26Q16 27 18 26Q19 28 16 30Z" fill="#F9A825"/><ellipse cx="16" cy="17" rx="11" ry="13" fill="none" stroke="#F9A825" stroke-width=".8"/><path d="M16 4.5Q15.5 3 15 2" fill="none" stroke="#6D4C41" stroke-width="1.2" stroke-linecap="round"/><path d="M15 3Q11 1 10 3Q11 5 15 4Z" fill="#43A047"/><path d="M15.5 3.5Q19 1 20 3Q19 5 15.5 4.5Z" fill="#66BB6A"/></svg></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Scrape Options (hidden until analysis done) -->
+      <div id="optionsPanel" class="options-panel glass-card hidden">
         <div class="options-header">
           <h2>Collection Settings</h2>
           <p class="options-subtitle">Configure how data is collected. Hover over any option for more details.</p>
@@ -90,11 +113,14 @@
           <div class="option-block">
             <label class="option-label">
               Sort by
-              <span class="info-tooltip" data-tooltip="Select one or both sort orders. Each mode fetches a separate batch of posts, so selecting both with 50 posts/sort yields up to 100 unique posts.">?</span>
+              <span class="info-tooltip" data-tooltip="Each mode fetches a separate batch. Selecting multiple modes with 50 posts/sort yields more unique posts. Duplicates across modes are automatically removed.">?</span>
             </label>
             <div class="pill-group" id="sortPills">
               <button class="pill active" data-value="new" title="Most recently submitted posts">New</button>
-              <button class="pill active" data-value="top" title="Highest-scored posts (uses Time Filter below)">Top</button>
+              <button class="pill active" data-value="top" title="Highest-scored posts (uses Time Filter)">Top</button>
+              <button class="pill" data-value="hot" title="Currently trending posts">Hot</button>
+              <button class="pill" data-value="controversial" title="Most polarizing posts — great for debate/conflict research">Controversial</button>
+              <button class="pill" data-value="rising" title="Posts gaining traction right now (limited to ~100)">Rising</button>
             </div>
           </div>
 
@@ -102,19 +128,20 @@
           <div class="option-block">
             <label class="option-label" for="limit">
               Posts per sort
-              <span class="info-tooltip" data-tooltip="How many posts to collect per sort mode. E.g. 50 posts x 3 sort modes = up to 150 posts total. Reddit caps at ~1000 per sort.">?</span>
+              <span class="info-tooltip" data-tooltip="How many posts to collect per sort mode. Reddit caps at ~1,000 per sort. E.g. 100 posts x 2 sorts = up to 200 posts.">?</span>
             </label>
-            <input type="number" id="limit" value="50" min="1" max="10000" class="input-small" title="Number of posts to fetch per sort mode (1-10,000)" />
+            <input type="number" id="limit" value="50" min="1" max="1000" class="input-small" title="Number of posts to fetch per sort mode (1-1,000)" />
+            <span class="limit-note">Max ~1,000 per sort mode</span>
           </div>
 
-          <!-- Time Filter (for Top) -->
-          <div class="option-block">
+          <!-- Time Filter (for Top / Controversial) -->
+          <div class="option-block" id="timeFilterBlock">
             <label class="option-label">
               Time filter
-              <span class="info-tooltip" data-tooltip="Only applies to 'Top' sort. Controls the time window for top-scored posts. 'All time' gives the highest-scoring posts ever.">?</span>
+              <span class="info-tooltip" data-tooltip="Only applies to 'Top' and 'Controversial' sorts. Controls the time window. Greyed out when neither is selected.">?</span>
             </label>
             <div class="select-wrapper">
-              <select id="timeFilter" title="Time range for 'Top' sort mode">
+              <select id="timeFilter" title="Time range for 'Top' and 'Controversial' sorts">
                 <option value="all" selected>All time</option>
                 <option value="year">Past year</option>
                 <option value="month">Past month</option>
@@ -122,12 +149,13 @@
                 <option value="day">Today</option>
               </select>
             </div>
+            <span class="time-filter-note" id="timeFilterNote"></span>
           </div>
         </div>
 
         <!-- Toggles -->
         <div class="toggles-grid">
-          <label class="toggle-switch" title="Fetch the full comment tree for each post. Adds body text, author, score, and timestamps per comment. Slows down collection but provides richer data.">
+          <label class="toggle-switch" title="Fetch the full comment tree for each post. Adds body text, author, score, depth, and timestamps per comment. Slows down collection but provides richer data.">
             <input type="checkbox" id="includeComments" checked />
             <span class="toggle-slider"></span>
             <span class="toggle-text">Include comments</span>
@@ -144,26 +172,28 @@
             <span class="toggle-slider"></span>
             <span class="toggle-text">Skip NSFW posts</span>
           </label>
-
-          <label class="toggle-switch" title="Enable keyword-based scoring. Each post and comment is scored by how many keywords from your categories it matches. Great for thematic analysis.">
-            <input type="checkbox" id="enableKeywords" />
-            <span class="toggle-slider"></span>
-            <span class="toggle-text">Keyword analysis</span>
-          </label>
         </div>
 
-        <!-- Keyword Section (hidden by default) -->
-        <div id="keywordsPanel" class="keywords-panel hidden">
-          <div class="keywords-header">
-            <label class="option-label">
-              Keyword categories
-              <span class="info-tooltip" data-tooltip="Define thematic categories with keywords. Each post/comment gets a relevance score based on matches. Results are added as columns in the exported CSV.">?</span>
+        <!-- Advanced: Keyword Analysis (collapsed) -->
+        <details class="advanced-section">
+          <summary class="advanced-toggle">Advanced: Keyword Analysis</summary>
+          <div class="keywords-panel">
+            <div class="keywords-header">
+              <label class="option-label">
+                Keyword categories
+                <span class="info-tooltip" data-tooltip="Define thematic categories with keywords. Each post/comment gets a relevance score based on matches. Results are added as columns in the exported CSV.">?</span>
+              </label>
+              <button class="btn-text" id="addCategoryBtn" title="Add a new keyword category">+ Add category</button>
+            </div>
+            <p class="hint">Define keyword categories for thematic analysis. Posts and comments are scored by how many keywords they match. One keyword per line.</p>
+            <label class="toggle-switch" style="margin-bottom: 0.75rem;">
+              <input type="checkbox" id="enableKeywords" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Enable keyword scoring in export</span>
             </label>
-            <button class="btn-text" id="addCategoryBtn" title="Add a new keyword category">+ Add category</button>
+            <div id="keyword-editors"></div>
           </div>
-          <p class="hint">Define keyword categories for thematic analysis. Posts and comments are scored by how many keywords they match. One keyword per line. Matched categories appear as columns in your CSV export.</p>
-          <div id="keyword-editors"></div>
-        </div>
+        </details>
       </div>
 
       <!-- Progress -->
@@ -181,36 +211,35 @@
       <div id="results" class="results-section hidden">
         <div class="results-header">
           <h2>Results</h2>
-          <p class="results-subtitle">Your dataset is ready. Download in the format that fits your workflow.</p>
+          <p id="resultsSubtitle" class="results-subtitle">Your dataset is ready. Download in the format that fits your workflow.</p>
         </div>
 
         <div id="summary" class="stats-grid"></div>
 
         <div class="download-bar">
-          <button class="btn-download" id="downloadCsv" title="Download posts as CSV. Includes title, author, score, timestamps, word counts, and keyword matches. Opens directly in Excel, Google Sheets, or R/Python.">
+          <button class="btn-download btn-download-primary" id="downloadCombinedCsv" title="Tidy CSV: one row per comment joined with parent post. Ready for R (tidyverse) or Python (pandas). Recommended for most research.">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Posts CSV
-          </button>
-          <button class="btn-download" id="downloadCommentsCsv" title="Download all comments as a separate CSV. Each row is one comment with post context, author, score, and keyword matches.">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Comments CSV
-          </button>
-          <button class="btn-download" id="downloadCombinedCsv" title="Download a combined tidy CSV with one row per comment, each joined with its parent post fields. Posts without comments appear as their own row. Ideal for R (tidyverse) or Python (pandas) analysis.">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Combined CSV
-          </button>
-          <button class="btn-download" id="downloadJson" title="Download the complete dataset as JSON, including nested comments. Best for programmatic analysis with Python, R, or Node.js.">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Full JSON
+            Download for R / Python (Combined CSV)
           </button>
         </div>
 
-        <div class="export-hint">
-          <p><strong>Posts CSV</strong> &mdash; one row per post with title, author, score, timestamps, word counts, and keyword matches</p>
-          <p><strong>Comments CSV</strong> &mdash; one row per comment with post context, useful for discourse analysis</p>
-          <p><strong>Combined CSV</strong> &mdash; tidy format joining each comment with its parent post, ready for R/Python analysis</p>
-          <p><strong>Full JSON</strong> &mdash; nested structure with all data, ideal for Python/R scripting</p>
-        </div>
+        <details class="other-formats">
+          <summary>Other formats</summary>
+          <div class="download-bar download-bar-secondary">
+            <button class="btn-download" id="downloadCsv" title="One row per post with all metadata.">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Posts CSV
+            </button>
+            <button class="btn-download" id="downloadCommentsCsv" title="One row per comment with post context.">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Comments CSV
+            </button>
+            <button class="btn-download" id="downloadJson" title="Nested JSON with all data. Best for scripting.">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Full JSON
+            </button>
+          </div>
+        </details>
 
         <div class="preview-section">
           <details>
